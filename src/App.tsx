@@ -231,7 +231,7 @@ export default function App() {
       })
       if (res.status === 401) return handleLogout()
 
-      let currentTrack = null
+      let currentTrack: any = null
       if (res.status === 200) {
         const data = await res.json()
         currentTrack = data.item
@@ -372,7 +372,6 @@ export default function App() {
     const code = couponInput.trim().toUpperCase()
     if (!code) return
 
-    // 静的コードまたはSupabaseに登録されているクーポンの検証
     if (code === 'PRO2026') {
       setAppliedDiscount(20)
       showToast('🎉 特典クーポン適用: 20% OFF!')
@@ -472,7 +471,6 @@ export default function App() {
             <button onClick={() => setCurrentTab('mypage')} style={{ background: currentTab === 'mypage' ? activeTheme.accent : '#222', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '16px', cursor: 'pointer' }}>マイページ</button>
             <button onClick={() => setCurrentTab('settings')} style={{ background: currentTab === 'settings' ? activeTheme.accent : '#222', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '16px', cursor: 'pointer' }}>設定</button>
             
-            {/* 特定Spotifyユーザー（Igfemg）だけに管理者タブを表示 */}
             {user?.id === ADMIN_SPOTIFY_ID && (
               <button onClick={() => setCurrentTab('admin')} style={{ background: currentTab === 'admin' ? '#e74c3c' : '#8b0000', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '16px', fontWeight: 'bold', cursor: 'pointer' }}>👑 管理者</button>
             )}
@@ -701,7 +699,7 @@ export default function App() {
               </div>
             )}
 
-            {/* 管理者タブ（特定Spotifyアカウント Igfemg のみ利用可能） */}
+            {/* 管理者タブ */}
             {currentTab === 'admin' && (
               <div style={{ background: activeTheme.card, border: '2px solid #e74c3c', borderRadius: '12px', padding: '20px' }}>
                 {user?.id === ADMIN_SPOTIFY_ID ? (
