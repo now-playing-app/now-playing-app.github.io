@@ -35,11 +35,14 @@ export default function App() {
   const [isGhostMode, setIsGhostMode] = useState(false)
   const [friendsStatus, setFriendsStatus] = useState<any[]>([])
 
-  // プロフィール＆プラン
+  // プロフィール & サブスク状態
   const [bio, setBio] = useState('')
   const [statusMsg, setStatusMsg] = useState('')
   const [pinnedTrack, setPinnedTrack] = useState('')
-  const [isPremium, setIsPremium] = useState(false)
+  const [planType, setPlanType] = useState<'free' | 'premium' | 'family'>('free')
+  const [trialStartedAt, setTrialStartedAt] = useState<string | null>(null)
+  const [couponInput, setCouponInput] = useState('')
+  const [appliedDiscount, setAppliedDiscount] = useState<number>(0)
   const [theme, setTheme] = useState<'dark' | 'neon' | 'cyber'>('dark')
 
   // リアクション & ログ
@@ -53,7 +56,18 @@ export default function App() {
   const [groupMembers, setGroupMembers] = useState<any[]>([])
 
   // モーダル（ダイアログ）表示管理
-  const [activeModal, setActiveModal] = useState<'terms' | 'privacy' | 'api' | null>(null)
+  const [activeModal, setActiveModal] = useState<'terms' | 'privacy' | 'tokushoho' | 'vip' | 'api' | null>(null)
+
+  // 1ヶ月無料体験の有効判定（30日）
+  const isTrialActive = () => {
+    if (!trialStartedAt) return false
+    const startDate = new Date(trialStartedAt).getTime()
+    const now = new Date().getTime()
+    const diffDays = (now - startDate) / (1000 * 3600 * 24)
+    return diffDays <= 30
+  }
+
+  const isVIP = planType === 'premium' || planType === 'family' || isTrialActive()
 
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search)
@@ -115,7 +129,8 @@ export default function App() {
             setBio(dbUser.bio || '')
             setStatusMsg(dbUser.status_message || '')
             setPinnedTrack(dbUser.pinned_track || '')
-            setIsPremium(dbUser.is_premium || false)
+            setPlanType(dbUser.plan_type || 'free')
+            setTrialStartedAt(dbUser.trial_started_at || null)
           }
 
           const pendingRef = localStorage.getItem('pending_ref')
@@ -177,8 +192,10 @@ export default function App() {
           is_ghost: isGhostMode,
           bio: bio,
           status_message: statusMsg,
-          pinned_track: isPremium ? pinnedTrack : null,
-          is_premium: isPremium,
+          pinned_track: isVIP ? pinnedTrack : null,
+          is_premium: isVIP,
+          plan_type: planType,
+          trial_started_at: trialStartedAt,
           updated_at: new Date().toISOString(),
         },
         { onConflict: 'id' }
@@ -251,6 +268,28 @@ export default function App() {
     }
   }
 
+  // クーポンコード適用
+  const handleApplyCoupon = async () => {
+    if (!couponInput.trim()) return
+    const { data } = await supabase.from('coupons').select('*').eq('code', couponInput.toUpperCase()).eq('is_active', true).single()
+    if (data) {
+      setAppliedDiscount(data.discount_percent)
+      alert(`クーポン適用完了！ ${data.discount_percent}% OFF`)
+    } else {
+      alert('無効なクーポンコードです')
+    }
+  }
+
+  // 1ヶ月無料体験開始
+  const handleStartTrial = async () => {
+    if (!user) return
+    const nowIso = new Date().toISOString()
+    setTrialStartedAt(nowIso)
+    await supabase.from('user_status').update({ trial_started_at: nowIso }).eq('id', user.id)
+    alert('🎉 1ヶ月無料VIP体験がスタートしました！')
+    setActiveModal(null)
+  }
+
   useEffect(() => {
     if (token && user) {
       fetchCurrentlyPlaying()
@@ -266,7 +305,7 @@ export default function App() {
 
       return () => clearInterval(interval)
     }
-  }, [token, user, isGhostMode, bio, statusMsg, pinnedTrack, isPremium, selectedGroup])
+  }, [token, user, isGhostMode, bio, statusMsg, pinnedTrack, planType, trialStartedAt, selectedGroup])
 
   const handleLogin = async () => {
     const codeVerifier = generateRandomString(128)
@@ -296,7 +335,7 @@ export default function App() {
   const shareUrl = user ? `${window.location.origin}${window.location.pathname}?ref=${user.id}` : ''
 
   const getThemeStyle = () => {
-    if (!isPremium) return { bg: '#121212', card: '#181818', border: '#282828', accent: '#1DB954', color: '#ffffff' }
+    if (!isVIP) return { bg: '#121212', card: '#181818', border: '#282828', accent: '#1DB954', color: '#ffffff' }
     if (theme === 'neon') return { bg: '#0b031a', card: '#160933', border: '#ff007f', accent: '#ff007f', color: '#00f6ff' }
     if (theme === 'cyber') return { bg: '#000000', card: '#0d0d0d', border: '#00ff66', accent: '#00ff66', color: '#ffffff' }
     return { bg: '#121212', card: '#181818', border: '#282828', accent: '#1DB954', color: '#ffffff' }
@@ -309,11 +348,16 @@ export default function App() {
       {/* ヘッダー */}
       <header style={{ padding: '16px 24px', borderBottom: `1px solid ${activeTheme.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', maxWidth: '1200px', margin: '0 auto' }}>
         <h1 style={{ margin: 0, fontSize: '20px', fontWeight: 'bold' }}>🎵 Music Share</h1>
-        {token && (
-          <button onClick={handleLogout} style={{ background: '#333', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px' }}>
-            ログアウト
+        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+          <button onClick={() => setActiveModal('vip')} style={{ background: 'gold', color: '#000', border: 'none', padding: '6px 12px', borderRadius: '16px', fontWeight: 'bold', fontSize: '12px', cursor: 'pointer' }}>
+            👑 VIPプラン案内
           </button>
-        )}
+          {token && (
+            <button onClick={handleLogout} style={{ background: '#333', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px' }}>
+              ログアウト
+            </button>
+          )}
+        </div>
       </header>
 
       {/* メインコンテンツ */}
@@ -330,9 +374,11 @@ export default function App() {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '20px' }}>
             {/* 左カラム：自分の状況・プロフィール */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-              {/* 再生状況 */}
               <div style={{ background: activeTheme.card, border: `1px solid ${activeTheme.border}`, borderRadius: '12px', padding: '20px' }}>
-                <h3 style={{ margin: '0 0 16px 0', fontSize: '16px' }}>自分の再生状況</h3>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                  <h3 style={{ margin: 0, fontSize: '16px' }}>自分の再生状況</h3>
+                  {isVIP && <span style={{ background: 'gold', color: '#000', fontSize: '10px', padding: '2px 6px', borderRadius: '4px', fontWeight: 'bold' }}>VIP MEMBER</span>}
+                </div>
                 <label style={{ fontSize: '13px', display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer', marginBottom: '16px' }}>
                   <input type="checkbox" checked={isGhostMode} onChange={(e) => setIsGhostMode(e.target.checked)} />
                   👻 ゴーストモード（再生曲を非公開）
@@ -366,12 +412,12 @@ export default function App() {
                   </div>
                   <div>
                     <label style={{ fontSize: '12px', color: '#aaa', display: 'block', marginBottom: '4px' }}>📌 推し曲ピン留め（VIP限定）</label>
-                    <input type="text" disabled={!isPremium} value={pinnedTrack} onChange={(e) => setPinnedTrack(e.target.value)} placeholder={isPremium ? '曲名 - アーティスト' : 'VIP会員のみ利用可能'} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #333', background: '#111', color: '#fff', opacity: isPremium ? 1 : 0.5, boxSizing: 'border-box' }} />
+                    <input type="text" disabled={!isVIP} value={pinnedTrack} onChange={(e) => setPinnedTrack(e.target.value)} placeholder={isVIP ? '曲名 - アーティスト' : 'VIP会員のみ利用可能'} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #333', background: '#111', color: '#fff', opacity: isVIP ? 1 : 0.5, boxSizing: 'border-box' }} />
                   </div>
                 </div>
               </div>
 
-              {/* リアクションログ表示 */}
+              {/* リアクションログ */}
               <div style={{ background: activeTheme.card, border: `1px solid ${activeTheme.border}`, borderRadius: '12px', padding: '20px' }}>
                 <h3 style={{ margin: '0 0 12px 0', fontSize: '16px' }}>届いたリアクション</h3>
                 <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>
@@ -381,7 +427,7 @@ export default function App() {
                     </span>
                   ))}
                 </div>
-                <div style={{ maxHeight: '120px', overflowY: 'auto', borderTop: '1px solid #333', paddingTop: '8px' }}>
+                <div style={{ maxHeight: '100px', overflowY: 'auto', borderTop: '1px solid #333', paddingTop: '8px' }}>
                   {reactionLogs.slice(0, 5).map((log, i) => (
                     <div key={i} style={{ fontSize: '11px', color: '#aaa', marginBottom: '4px' }}>
                       {new Date(log.created_at).toLocaleTimeString()} に {log.emoji} が届きました
@@ -391,32 +437,24 @@ export default function App() {
               </div>
             </div>
 
-            {/* 右カラム：フレンド・グループ・設定 */}
+            {/* 右カラム：フレンド・グループ・テーマ */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-              {/* 招待リンク */}
               <div style={{ background: activeTheme.card, border: `1px dashed ${activeTheme.border}`, borderRadius: '12px', padding: '16px' }}>
                 <p style={{ margin: '0 0 8px 0', fontSize: '14px', fontWeight: 'bold' }}>友達を招待するリンク</p>
                 <input type="text" readOnly value={shareUrl} onClick={(e) => (e.target as HTMLInputElement).select()} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #333', background: '#111', color: '#fff', textAlign: 'center', fontSize: '12px', boxSizing: 'border-box' }} />
               </div>
 
-              {/* プレミアムプラン機能 */}
-              <div style={{ background: activeTheme.card, border: `1px solid ${activeTheme.border}`, borderRadius: '12px', padding: '16px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <h3 style={{ margin: 0, fontSize: '15px' }}>VIP Premium 設定</h3>
-                  <button onClick={() => setIsPremium(!isPremium)} style={{ background: isPremium ? 'gold' : '#333', color: isPremium ? '#000' : '#fff', border: 'none', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>
-                    {isPremium ? 'VIP有効中' : 'VIP体験切り替え'}
-                  </button>
-                </div>
-                {isPremium ? (
-                  <div style={{ marginTop: '12px', display: 'flex', gap: '8px' }}>
-                    <button onClick={() => setTheme('dark')} style={{ padding: '4px 8px', fontSize: '12px' }}>Dark</button>
-                    <button onClick={() => setTheme('neon')} style={{ padding: '4px 8px', fontSize: '12px' }}>Neon</button>
-                    <button onClick={() => setTheme('cyber')} style={{ padding: '4px 8px', fontSize: '12px' }}>Cyber</button>
+              {/* VIPテーマ選択 */}
+              {isVIP && (
+                <div style={{ background: activeTheme.card, border: `1px solid ${activeTheme.border}`, borderRadius: '12px', padding: '16px' }}>
+                  <h3 style={{ margin: '0 0 8px 0', fontSize: '14px' }}>🎨 VIPテーマカスタマイズ</h3>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button onClick={() => setTheme('dark')} style={{ padding: '4px 12px', fontSize: '12px' }}>Dark</button>
+                    <button onClick={() => setTheme('neon')} style={{ padding: '4px 12px', fontSize: '12px' }}>Neon</button>
+                    <button onClick={() => setTheme('cyber')} style={{ padding: '4px 12px', fontSize: '12px' }}>Cyber</button>
                   </div>
-                ) : (
-                  <p style={{ margin: '8px 0 0 0', fontSize: '12px', color: '#888' }}>VIPになると推し曲ピン留め・テーマカラー変更が利用可能になります。</p>
-                )}
-              </div>
+                </div>
+              )}
 
               {/* グループ機能 */}
               <div style={{ background: activeTheme.card, border: `1px solid ${activeTheme.border}`, borderRadius: '12px', padding: '20px' }}>
@@ -484,11 +522,12 @@ export default function App() {
         )}
       </main>
 
-      {/* フッター（利用規約・プライバシーポリシー・API説明） */}
+      {/* フッター */}
       <footer style={{ marginTop: '40px', padding: '20px', borderTop: `1px solid ${activeTheme.border}`, textAlign: 'center', fontSize: '12px', color: '#888' }}>
-        <div style={{ display: 'flex', justifyContent: 'center', gap: '16px', marginBottom: '8px' }}>
+        <div style={{ display: 'flex', justifyContent: 'center', gap: '16px', marginBottom: '8px', flexWrap: 'wrap' }}>
           <button onClick={() => setActiveModal('terms')} style={{ background: 'none', border: 'none', color: '#888', cursor: 'pointer', fontSize: '12px' }}>利用規約</button>
           <button onClick={() => setActiveModal('privacy')} style={{ background: 'none', border: 'none', color: '#888', cursor: 'pointer', fontSize: '12px' }}>プライバシーポリシー</button>
+          <button onClick={() => setActiveModal('tokushoho')} style={{ background: 'none', border: 'none', color: '#888', cursor: 'pointer', fontSize: '12px' }}>特定商取引法に基づく表記</button>
           <button onClick={() => setActiveModal('api')} style={{ background: 'none', border: 'none', color: '#888', cursor: 'pointer', fontSize: '12px' }}>Spotify APIについて</button>
         </div>
         <p style={{ margin: 0 }}>© 2026 Music Share App</p>
@@ -496,32 +535,110 @@ export default function App() {
 
       {/* モーダル表示 */}
       {activeModal && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, padding: '20px' }}>
-          <div style={{ background: '#1e1e1e', color: '#fff', padding: '24px', borderRadius: '12px', maxWidth: '500px', width: '100%', maxHeight: '80vh', overflowY: 'auto' }}>
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, padding: '20px' }}>
+          <div style={{ background: '#1e1e1e', color: '#fff', padding: '24px', borderRadius: '12px', maxWidth: '550px', width: '100%', maxHeight: '85vh', overflowY: 'auto' }}>
+            
+            {/* VIPプラン案内モーダル */}
+            {activeModal === 'vip' && (
+              <div>
+                <h2 style={{ textAlign: 'center', color: 'gold', marginBottom: '16px' }}>👑 Music Share VIP 料金プラン</h2>
+                
+                {/* クーポンコード入力 */}
+                <div style={{ background: '#2a2a2a', padding: '12px', borderRadius: '8px', marginBottom: '16px' }}>
+                  <label style={{ fontSize: '12px', color: '#ccc', display: 'block', marginBottom: '4px' }}>クーポンコードをお持ちですか？</label>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <input type="text" value={couponInput} onChange={(e) => setCouponInput(e.target.value)} placeholder="例: WELCOME50" style={{ flex: 1, padding: '6px', borderRadius: '4px', border: '1px solid #444', background: '#111', color: '#fff' }} />
+                    <button onClick={handleApplyCoupon} style={{ background: 'gold', border: 'none', padding: '6px 12px', borderRadius: '4px', fontWeight: 'bold', cursor: 'pointer' }}>適用</button>
+                  </div>
+                  {appliedDiscount > 0 && <p style={{ color: '#00ff66', fontSize: '12px', margin: '6px 0 0 0' }}>{appliedDiscount}% 割引が適用されます！</p>}
+                </div>
+
+                {/* プラン比較 */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
+                  <div style={{ border: '1px solid #444', borderRadius: '8px', padding: '12px', textAlign: 'center' }}>
+                    <h4>プレミアムプラン</h4>
+                    <p style={{ fontSize: '18px', fontWeight: 'bold', color: 'gold', margin: '4px 0' }}>
+                      {appliedDiscount > 0 ? `¥${300 * (1 - appliedDiscount / 100)}/月` : '¥300 / 月'}
+                    </p>
+                    <ul style={{ textAlign: 'left', fontSize: '11px', color: '#ccc', paddingLeft: '16px' }}>
+                      <li>推し曲の固定（Pin）</li>
+                      <li>カスタムデザインテーマ</li>
+                      <li>VIP限定バッジ表示</li>
+                    </ul>
+                  </div>
+                  <div style={{ border: '2px solid gold', borderRadius: '8px', padding: '12px', textAlign: 'center', background: '#282000' }}>
+                    <h4>ファミリープラン</h4>
+                    <p style={{ fontSize: '18px', fontWeight: 'bold', color: 'gold', margin: '4px 0' }}>
+                      {appliedDiscount > 0 ? `¥${600 * (1 - appliedDiscount / 100)}/月` : '¥600 / 月'}
+                    </p>
+                    <p style={{ fontSize: '10px', color: '#aaa' }}>最大6人まで利用可能</p>
+                    <ul style={{ textAlign: 'left', fontSize: '11px', color: '#ccc', paddingLeft: '16px' }}>
+                      <li>プレミアム機能全開放</li>
+                      <li>グループ上限無制限</li>
+                    </ul>
+                  </div>
+                </div>
+
+                <button onClick={handleStartTrial} style={{ background: 'gold', color: '#000', border: 'none', padding: '12px', borderRadius: '8px', fontWeight: 'bold', width: '100%', cursor: 'pointer', fontSize: '14px', marginBottom: '8px' }}>
+                  🎁 まずは 1ヶ月無料で体験する
+                </button>
+              </div>
+            )}
+
+            {/* 利用規約 */}
             {activeModal === 'terms' && (
               <div>
                 <h3>利用規約</h3>
-                <p style={{ fontSize: '13px', lineHeight: '1.6', color: '#ccc' }}>
-                  本サービスは、ユーザー間の音楽再生状況共有を目的としています。公序良俗に反する利用や、他者への嫌がらせ目的でのリアクション送信を禁止します。違反が確認された場合、アクセスを制限することがあります。
+                <p style={{ fontSize: '12px', lineHeight: '1.6', color: '#ccc' }}>
+                  本利用規約は、Music Share（以下「当サービス」）の提供条件および当サービスと利用者との間の権利義務関係を定めるものです。
+                  <br /><br />
+                  1. 利用登録: Spotifyアカウントを連携することで利用登録が完了します。<br />
+                  2. 禁止事項: 不正アクセス、ハラスメント行為、自動プログラムによるデータ取得を禁止します。<br />
+                  3. 課金とキャンセル: 有料プランは月額更新制です。解約手続を行わない限り自動更新されます。
                 </p>
               </div>
             )}
+
+            {/* プライバシーポリシー */}
             {activeModal === 'privacy' && (
               <div>
                 <h3>プライバシーポリシー</h3>
-                <p style={{ fontSize: '13px', lineHeight: '1.6', color: '#ccc' }}>
-                  当アプリは、Spotify Web APIを利用して「現在再生中の曲情報」および「公開プロフィール情報」のみを取得します。取得したデータはフレンド間での共有目的にのみ使用し、第三者への提供や不要な保存は行いません。
+                <p style={{ fontSize: '12px', lineHeight: '1.6', color: '#ccc' }}>
+                  当サービスは、ユーザーのプライバシーを尊重し、個人情報の保護に努めます。
+                  <br /><br />
+                  1. 取得情報: SpotifyユーザーID、表示名、現在再生中の楽曲データ、アイコン画像。<br />
+                  2. 利用目的: フレンド間での再生状況リアルタイム共有およびサービス向上のため。<br />
+                  3. 第三者提供: 取得したデータを同意なく第三者に提供することはありません。
                 </p>
               </div>
             )}
+
+            {/* 特定商取引法に基づく表記 */}
+            {activeModal === 'tokushoho' && (
+              <div>
+                <h3>特定商取引法に基づく表記</h3>
+                <div style={{ fontSize: '12px', lineHeight: '1.8', color: '#ccc' }}>
+                  <p><strong>販売事業者:</strong> Music Share 運営事務局</p>
+                  <p><strong>運営責任者:</strong> 代表者氏名</p>
+                  <p><strong>所在地:</strong> 東京都渋谷区（準備中）</p>
+                  <p><strong>お問い合わせ:</strong> support@example.com</p>
+                  <p><strong>販売価格:</strong> 各プラン詳細ページに表示</p>
+                  <p><strong>支払方法:</strong> クレジットカード決済等</p>
+                  <p><strong>解約について:</strong> 設定画面よりいつでも解約可能（日割り返金不可）</p>
+                </div>
+              </div>
+            )}
+
+            {/* Spotify API 説明 */}
             {activeModal === 'api' && (
               <div>
-                <h3>Spotify APIの連携仕様</h3>
-                <p style={{ fontSize: '13px', lineHeight: '1.6', color: '#ccc' }}>
-                  本アプリはSpotify Developer APIと連携しています。認証にはOAuth 2.0 PKCEフローを採用し、パスワード等の機密情報は保存しません。ゴーストモードを有効にすることで、いつでも再生情報の共有を停止できます。
+                <h3>Spotify APIとの連携について</h3>
+                <p style={{ fontSize: '12px', lineHeight: '1.6', color: '#ccc' }}>
+                  当アプリはSpotify Developer Web APIを通じてデータを取得しています。認証にはOAuth 2.0 PKCEを採用しており、お客様のSpotifyパスワードは一切保持しません。
                 </p>
               </div>
             )}
+
             <button onClick={() => setActiveModal(null)} style={{ marginTop: '16px', background: activeTheme.accent, color: '#fff', border: 'none', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', width: '100%' }}>
               閉じる
             </button>
