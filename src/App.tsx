@@ -29,13 +29,13 @@ async function generateCodeChallenge(codeVerifier: string) {
 }
 
 export default function App() {
-  const [token, setToken] = useState<string | null>(null)
+  const [token, setToken] = useState<string | null>(localStorage.getItem('spotify_token'))
   const [user, setUser] = useState<any>(null)
   const [track, setTrack] = useState<any>(null)
   const [isGhostMode, setIsGhostMode] = useState(false)
   const [friendsStatus, setFriendsStatus] = useState<any[]>([])
 
-  // 1. 初回アクセス時にURLの ?ref= (招待コード) を保持
+  // 1. 初回アクセス時に招待コード(?ref=)があれば保存
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search)
     const ref = urlParams.get('ref')
@@ -67,6 +67,7 @@ export default function App() {
           .then((data) => {
             if (data.access_token) {
               setToken(data.access_token)
+              localStorage.setItem('spotify_token', data.access_token)
               window.history.replaceState({}, document.title, window.location.pathname)
             }
           })
@@ -75,18 +76,24 @@ export default function App() {
     }
   }, [])
 
-  // 3. ユーザー情報の取得 & 招待友達の追加処理
+  // 3. ユーザー情報の取得 & 招待コードがあれば自動フレンド追加
   useEffect(() => {
     if (!token) return
     fetch('https://api.spotify.com/v1/me', {
       headers: { Authorization: `Bearer ${token}` },
     })
-      .then((res) => res.json())
+      .then((res) => {
+        if (res.status === 401) {
+          // トークン切れの場合はログアウト状態に戻す
+          handleLogout()
+          return null
+        }
+        return res.json()
+      })
       .then((data) => {
         if (data && data.id) {
           setUser(data)
           
-          // 保管していた招待IDがあれば自動で双方向フレンド登録
           const pendingRef = localStorage.getItem('pending_ref')
           if (pendingRef && pendingRef !== data.id) {
             addFriend(data.id, pendingRef)
@@ -99,16 +106,18 @@ export default function App() {
       .catch((err) => console.error(err))
   }, [token])
 
+  // フレンド双方向登録
   const addFriend = async (myId: string, friendId: string) => {
     try {
-      await supabase.from('friendships').upsert([{ user_id: myId, friend_id: friendId }])
-      await supabase.from('friendships').upsert([{ user_id: friendId, friend_id: myId }])
+      await supabase.from('friendships').upsert([{ user_id: myId, friend_id: friendId }], { onConflict: 'user_id,friend_id' })
+      await supabase.from('friendships').upsert([{ user_id: friendId, friend_id: myId }], { onConflict: 'user_id,friend_id' })
       fetchFriendsStatus(myId)
     } catch (e) {
-      console.error(e)
+      console.error('フレンド追加エラー:', e)
     }
   }
 
+  // 自分の再生状況を取得・Supabaseへ更新
   const fetchCurrentlyPlaying = async () => {
     if (!token || !user) return
 
@@ -133,16 +142,20 @@ export default function App() {
         album_cover: isGhostMode ? null : currentTrack?.album?.images?.[0]?.url || null,
         is_ghost: isGhostMode,
         updated_at: new Date().toISOString(),
-      })
+      }, { onConflict: 'id' })
     } catch (err) {
       console.error(err)
     }
   }
 
+  // フレンドの再生状況を取得
   const fetchFriendsStatus = async (myId: string) => {
     try {
       const { data: friendData } = await supabase.from('friendships').select('friend_id').eq('user_id', myId)
-      if (!friendData || friendData.length === 0) return
+      if (!friendData || friendData.length === 0) {
+        setFriendsStatus([])
+        return
+      }
 
       const friendIds = friendData.map((f) => f.friend_id)
       const { data: statusData } = await supabase.from('user_status').select('*').in('id', friendIds)
@@ -152,6 +165,7 @@ export default function App() {
     }
   }
 
+  // 3秒ごとに定期更新
   useEffect(() => {
     if (token && user) {
       fetchCurrentlyPlaying()
@@ -160,7 +174,7 @@ export default function App() {
       const interval = setInterval(() => {
         fetchCurrentlyPlaying()
         fetchFriendsStatus(user.id)
-      }, 5000)
+      }, 3000)
 
       return () => clearInterval(interval)
     }
@@ -183,10 +197,16 @@ export default function App() {
     window.location.href = `https://accounts.spotify.com/authorize?${params.toString()}`
   }
 
+  const handleLogout = () => {
+    localStorage.removeItem('spotify_token')
+    setToken(null)
+    setUser(null)
+  }
+
   const shareUrl = user ? `${window.location.origin}${window.location.pathname}?ref=${user.id}` : ''
 
   return (
-    <div style={{ padding: '20px', fontFamily: 'sans-serif', maxWidth: '500px', margin: '0 auto', textAlign: 'center' }}>
+    <div style={{ padding: '20px', fontFamily: 'sans-serif', maxWidth: '500px', margin: '0 auto', textAlign: 'center', color: '#fff' }}>
       <h1>Music Share</h1>
 
       {!token ? (
@@ -195,7 +215,7 @@ export default function App() {
         </button>
       ) : (
         <div>
-          <div style={{ border: '1px solid #ddd', borderRadius: '12px', padding: '16px', marginBottom: '20px', background: '#f9f9f9', color: '#333' }}>
+          <div style={{ border: '1px solid #444', borderRadius: '12px', padding: '16px', marginBottom: '20px', background: '#222' }}>
             <h3>自分の再生状況</h3>
             <label style={{ fontSize: '16px', cursor: 'pointer', display: 'block', marginBottom: '12px' }}>
               <input
@@ -208,43 +228,47 @@ export default function App() {
             </label>
 
             {isGhostMode ? (
-              <p style={{ color: '#888' }}>共有を一時停止中</p>
+              <p style={{ color: '#aaa' }}>共有を一時停止中</p>
             ) : track ? (
               <div>
                 <img src={track.album?.images?.[0]?.url} alt="cover" style={{ width: '120px', borderRadius: '8px' }} />
                 <h4>{track.name}</h4>
-                <p style={{ color: '#666', fontSize: '14px' }}>{track.artists?.map((a: any) => a.name).join(', ')}</p>
+                <p style={{ color: '#aaa', fontSize: '14px' }}>{track.artists?.map((a: any) => a.name).join(', ')}</p>
               </div>
             ) : (
-              <p style={{ color: '#888' }}>曲を再生していません</p>
+              <p style={{ color: '#aaa' }}>曲を再生していません</p>
             )}
           </div>
 
-          <div style={{ border: '1px dashed #aaa', borderRadius: '12px', padding: '12px', marginBottom: '20px' }}>
+          <div style={{ border: '1px dashed #666', borderRadius: '12px', padding: '12px', marginBottom: '20px' }}>
             <p style={{ margin: '0 0 8px 0', fontSize: '14px', fontWeight: 'bold' }}>友達を招待する URL</p>
-            <input type="text" readOnly value={shareUrl} style={{ width: '90%', padding: '8px', borderRadius: '6px', border: '1px solid #ccc' }} />
+            <input type="text" readOnly value={shareUrl} style={{ width: '90%', padding: '8px', borderRadius: '6px', border: '1px solid #444', background: '#111', color: '#fff' }} />
           </div>
 
-          <div style={{ textAlign: 'left' }}>
+          <div style={{ textAlign: 'left', marginBottom: '20px' }}>
             <h3>友達の Now Playing</h3>
             {friendsStatus.length === 0 ? (
-              <p style={{ color: '#888', fontSize: '14px' }}>まだ友達が追加されていないか、友達が曲を再生していません。</p>
+              <p style={{ color: '#aaa', fontSize: '14px' }}>まだ友達が追加されていないか、友達が曲を再生していません。</p>
             ) : (
               friendsStatus.map((friend) => (
-                <div key={friend.id} style={{ display: 'flex', alignItems: 'center', gap: '12px', borderBottom: '1px solid #eee', padding: '12px 0' }}>
+                <div key={friend.id} style={{ display: 'flex', alignItems: 'center', gap: '12px', borderBottom: '1px solid #333', padding: '12px 0' }}>
                   <img src={friend.album_cover || friend.avatar_url || 'https://via.placeholder.com/50'} alt="cover" style={{ width: '50px', height: '50px', borderRadius: '6px', objectFit: 'cover' }} />
                   <div>
                     <strong style={{ fontSize: '14px' }}>{friend.display_name}</strong>
                     {friend.is_ghost || !friend.track_name ? (
-                      <p style={{ margin: '4px 0 0 0', color: '#888', fontSize: '13px' }}>👻 共有オフ または 停止中</p>
+                      <p style={{ margin: '4px 0 0 0', color: '#aaa', fontSize: '13px' }}>👻 共有オフ または 停止中</p>
                     ) : (
-                      <p style={{ margin: '4px 0 0 0', fontSize: '13px' }}>🎵 {friend.track_name} - {friend.artist_name}</p>
+                      <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: '#1DB954' }}>🎵 {friend.track_name} - {friend.artist_name}</p>
                     )}
                   </div>
                 </div>
               ))
             )}
           </div>
+
+          <button onClick={handleLogout} style={{ padding: '8px 16px', fontSize: '12px', borderRadius: '12px', background: '#444', color: '#fff', border: 'none', cursor: 'pointer' }}>
+            ログアウト
+          </button>
         </div>
       )}
     </div>
