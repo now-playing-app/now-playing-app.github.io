@@ -35,27 +35,32 @@ export default function App() {
   const [isGhostMode, setIsGhostMode] = useState(false)
   const [friendsStatus, setFriendsStatus] = useState<any[]>([])
 
-  // 拡張機能用の状態
+  // プロフィール＆プラン
   const [bio, setBio] = useState('')
   const [statusMsg, setStatusMsg] = useState('')
   const [pinnedTrack, setPinnedTrack] = useState('')
   const [isPremium, setIsPremium] = useState(false)
   const [theme, setTheme] = useState<'dark' | 'neon' | 'cyber'>('dark')
 
-  // グループ機能用の状態
+  // リアクション & ログ
+  const [reactions, setReactions] = useState<any[]>([])
+  const [reactionLogs, setReactionLogs] = useState<any[]>([])
+
+  // グループ
   const [groups, setGroups] = useState<any[]>([])
   const [newGroupName, setNewGroupName] = useState('')
   const [selectedGroup, setSelectedGroup] = useState<string | null>(null)
   const [groupMembers, setGroupMembers] = useState<any[]>([])
 
-  // 1. 初回アクセス時に招待コード(?ref=)があれば保存
+  // モーダル（ダイアログ）表示管理
+  const [activeModal, setActiveModal] = useState<'terms' | 'privacy' | 'api' | null>(null)
+
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search)
     const ref = urlParams.get('ref')
     if (ref) localStorage.setItem('pending_ref', ref)
   }, [])
 
-  // 2. Spotify OAuth認証処理
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search)
     const code = urlParams.get('code')
@@ -82,12 +87,11 @@ export default function App() {
               window.history.replaceState({}, document.title, window.location.pathname)
             }
           })
-          .catch((err) => console.error('Token fetch error:', err))
+          .catch((err) => console.error(err))
       }
     }
   }, [])
 
-  // 3. ユーザープロフィール＆フレンド情報取得
   useEffect(() => {
     if (!token) return
 
@@ -106,7 +110,6 @@ export default function App() {
         if (data && data.id) {
           setUser(data)
 
-          // Supabaseから追加プロフィールを取得
           const { data: dbUser } = await supabase.from('user_status').select('*').eq('id', data.id).single()
           if (dbUser) {
             setBio(dbUser.bio || '')
@@ -123,16 +126,16 @@ export default function App() {
             fetchFriendsStatus(data.id)
           }
           fetchGroups(data.id)
+          fetchReactions(data.id)
         }
       } catch (err) {
-        console.error('Spotify user fetch error:', err)
+        console.error(err)
       }
     }
 
     fetchProfile()
   }, [token])
 
-  // フレンド追加
   const addFriend = async (myId: string, friendId: string) => {
     try {
       await supabase.from('friendships').insert([{ user_id: myId, friend_id: friendId }])
@@ -143,7 +146,6 @@ export default function App() {
     }
   }
 
-  // 再生中トラックの更新 & DB書き込み
   const fetchCurrentlyPlaying = async () => {
     if (!token || !user) return
 
@@ -175,18 +177,17 @@ export default function App() {
           is_ghost: isGhostMode,
           bio: bio,
           status_message: statusMsg,
-          pinned_track: pinnedTrack,
+          pinned_track: isPremium ? pinnedTrack : null,
           is_premium: isPremium,
           updated_at: new Date().toISOString(),
         },
         { onConflict: 'id' }
       )
     } catch (err) {
-      console.error('Track fetch error:', err)
+      console.error(err)
     }
   }
 
-  // フレンドステータス取得
   const fetchFriendsStatus = async (myId: string) => {
     try {
       const { data: friendData } = await supabase.from('friendships').select('friend_id').eq('user_id', myId)
@@ -199,11 +200,28 @@ export default function App() {
       const { data: statusData } = await supabase.from('user_status').select('*').in('id', friendIds)
       if (statusData) setFriendsStatus(statusData)
     } catch (e) {
-      console.error('Friends status fetch error:', e)
+      console.error(e)
     }
   }
 
-  // グループ取得
+  const fetchReactions = async (myId: string) => {
+    const { data } = await supabase.from('reactions').select('*').eq('to_user_id', myId).order('created_at', { ascending: false })
+    if (data) {
+      setReactionLogs(data)
+      const counts: { [key: string]: number } = {}
+      data.forEach((r) => {
+        counts[r.emoji] = (counts[r.emoji] || 0) + 1
+      })
+      setReactions(Object.entries(counts).map(([emoji, count]) => ({ emoji, count })))
+    }
+  }
+
+  const sendReaction = async (toUserId: string, emoji: string) => {
+    if (!user) return
+    await supabase.from('reactions').insert([{ from_user_id: user.id, to_user_id: toUserId, emoji }])
+    alert(`${emoji} リアクションを送りました！`)
+  }
+
   const fetchGroups = async (myId: string) => {
     const { data: myGroupMembers } = await supabase.from('group_members').select('group_id').eq('user_id', myId)
     if (myGroupMembers && myGroupMembers.length > 0) {
@@ -213,7 +231,6 @@ export default function App() {
     }
   }
 
-  // グループ作成
   const handleCreateGroup = async () => {
     if (!newGroupName.trim() || !user) return
     const { data: group } = await supabase.from('groups').insert([{ name: newGroupName, owner_id: user.id }]).select().single()
@@ -224,7 +241,6 @@ export default function App() {
     }
   }
 
-  // グループメンバー再生状況取得
   const loadGroupMembers = async (groupId: string) => {
     setSelectedGroup(groupId)
     const { data: members } = await supabase.from('group_members').select('user_id').eq('group_id', groupId)
@@ -235,22 +251,16 @@ export default function App() {
     }
   }
 
-  // リアクション送信
-  const sendReaction = async (toUserId: string, emoji: string) => {
-    if (!user) return
-    await supabase.from('reactions').insert([{ from_user_id: user.id, to_user_id: toUserId, emoji }])
-    alert(`${emoji} リアクションを送りました！`)
-  }
-
-  // 3秒ごとの自動更新
   useEffect(() => {
     if (token && user) {
       fetchCurrentlyPlaying()
       fetchFriendsStatus(user.id)
+      fetchReactions(user.id)
 
       const interval = setInterval(() => {
         fetchCurrentlyPlaying()
         fetchFriendsStatus(user.id)
+        fetchReactions(user.id)
         if (selectedGroup) loadGroupMembers(selectedGroup)
       }, 3000)
 
@@ -285,157 +295,237 @@ export default function App() {
 
   const shareUrl = user ? `${window.location.origin}${window.location.pathname}?ref=${user.id}` : ''
 
-  // テーマ切り替え用スタイル
   const getThemeStyle = () => {
-    if (theme === 'neon') return { bg: '#0d0221', card: '#241442', accent: '#ff007f', color: '#00f6ff' }
-    if (theme === 'cyber') return { bg: '#050505', card: '#121212', accent: '#00ff66', color: '#ffffff' }
-    return { bg: '#121212', card: '#222222', accent: '#1DB954', color: '#ffffff' }
+    if (!isPremium) return { bg: '#121212', card: '#181818', border: '#282828', accent: '#1DB954', color: '#ffffff' }
+    if (theme === 'neon') return { bg: '#0b031a', card: '#160933', border: '#ff007f', accent: '#ff007f', color: '#00f6ff' }
+    if (theme === 'cyber') return { bg: '#000000', card: '#0d0d0d', border: '#00ff66', accent: '#00ff66', color: '#ffffff' }
+    return { bg: '#121212', card: '#181818', border: '#282828', accent: '#1DB954', color: '#ffffff' }
   }
 
-  const currentTheme = getThemeStyle()
+  const activeTheme = getThemeStyle()
 
   return (
-    <div style={{ padding: '20px', fontFamily: 'sans-serif', maxWidth: '500px', margin: '0 auto', textAlign: 'center', background: currentTheme.bg, color: currentTheme.color, minHeight: '100vh' }}>
-      <h1>Music Share {isPremium && <span style={{ fontSize: '12px', background: 'gold', color: '#000', padding: '2px 8px', borderRadius: '10px' }}>VIP PREMIUM</span>}</h1>
-
-      {!token ? (
-        <button
-          onClick={handleLogin}
-          style={{ padding: '12px 24px', fontSize: '16px', borderRadius: '20px', background: currentTheme.accent, color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}
-        >
-          Spotifyでログイン
-        </button>
-      ) : (
-        <div>
-          {/* テーマ・Premium設定 */}
-          <div style={{ marginBottom: '16px', display: 'flex', justifyContent: 'center', gap: '8px' }}>
-            <button onClick={() => setTheme('dark')} style={{ padding: '4px 8px' }}>Dark</button>
-            <button onClick={() => setTheme('neon')} style={{ padding: '4px 8px' }}>Neon</button>
-            <button onClick={() => setTheme('cyber')} style={{ padding: '4px 8px' }}>Cyber</button>
-            <button onClick={() => setIsPremium(!isPremium)} style={{ padding: '4px 8px', background: 'gold', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>
-              {isPremium ? '有料プラン中' : '有料プラン体験'}
-            </button>
-          </div>
-
-          {/* 自分の再生状況 */}
-          <div style={{ border: `1px solid ${currentTheme.accent}`, borderRadius: '12px', padding: '16px', marginBottom: '20px', background: currentTheme.card }}>
-            <h3>自分の再生状況</h3>
-            <label style={{ fontSize: '14px', cursor: 'pointer', display: 'block', marginBottom: '12px' }}>
-              <input type="checkbox" checked={isGhostMode} onChange={(e) => setIsGhostMode(e.target.checked)} style={{ marginRight: '8px' }} />
-              👻 ゴーストモード（共有オフ）
-            </label>
-
-            {isGhostMode ? (
-              <p style={{ color: '#aaa' }}>共有を一時停止中</p>
-            ) : track ? (
-              <div>
-                <img src={track.album?.images?.[0]?.url} alt="cover" style={{ width: '120px', borderRadius: '8px', marginBottom: '8px' }} />
-                <h4 style={{ margin: '8px 0 4px 0' }}>{track.name}</h4>
-                <p style={{ color: '#aaa', fontSize: '14px', margin: '0 0 8px 0' }}>{track.artists?.map((a: any) => a.name).join(', ')}</p>
-                <a href={track.external_urls?.spotify} target="_blank" rel="noreferrer" style={{ color: currentTheme.accent, fontSize: '12px' }}>Spotifyアプリで開く 🎧</a>
-              </div>
-            ) : (
-              <p style={{ color: '#aaa' }}>曲を再生していません</p>
-            )}
-
-            {/* プロフィール編集領域 */}
-            <div style={{ marginTop: '16px', borderTop: '1px solid #444', paddingTop: '12px', textAlign: 'left' }}>
-              <p style={{ fontSize: '12px', margin: '4px 0' }}>一言ステータス:</p>
-              <input type="text" value={statusMsg} onChange={(e) => setStatusMsg(e.target.value)} placeholder="例: 作業中..." style={{ width: '95%', padding: '4px', borderRadius: '4px', background: '#111', color: '#fff', border: '1px solid #444' }} />
-              <p style={{ fontSize: '12px', margin: '8px 0 4px 0' }}>自己紹介 (Bio):</p>
-              <input type="text" value={bio} onChange={(e) => setBio(e.target.value)} placeholder="好きなジャンルなど" style={{ width: '95%', padding: '4px', borderRadius: '4px', background: '#111', color: '#fff', border: '1px solid #444' }} />
-              <p style={{ fontSize: '12px', margin: '8px 0 4px 0' }}>イチオシ固定曲 (Pin):</p>
-              <input type="text" value={pinnedTrack} onChange={(e) => setPinnedTrack(e.target.value)} placeholder="曲名 - アーティスト" style={{ width: '95%', padding: '4px', borderRadius: '4px', background: '#111', color: '#fff', border: '1px solid #444' }} />
-            </div>
-          </div>
-
-          {/* 友達招待URL */}
-          <div style={{ border: '1px dashed #666', borderRadius: '12px', padding: '12px', marginBottom: '20px' }}>
-            <p style={{ margin: '0 0 8px 0', fontSize: '14px', fontWeight: 'bold' }}>友達を招待する URL</p>
-            <input
-              type="text"
-              readOnly
-              value={shareUrl}
-              onClick={(e) => (e.target as HTMLInputElement).select()}
-              style={{ width: '90%', padding: '8px', borderRadius: '6px', border: '1px solid #444', background: '#111', color: '#fff', textAlign: 'center' }}
-            />
-          </div>
-
-          {/* グループ機能 */}
-          <div style={{ border: '1px solid #444', borderRadius: '12px', padding: '12px', marginBottom: '20px', background: currentTheme.card, textAlign: 'left' }}>
-            <h3>👥 グループ機能</h3>
-            <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
-              <input type="text" value={newGroupName} onChange={(e) => setNewGroupName(e.target.value)} placeholder="新グループ名" style={{ flex: 1, padding: '6px', borderRadius: '4px', background: '#111', color: '#fff', border: '1px solid #444' }} />
-              <button onClick={handleCreateGroup} style={{ background: currentTheme.accent, color: '#fff', border: 'none', borderRadius: '4px', padding: '6px 12px', cursor: 'pointer' }}>作成</button>
-            </div>
-            <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '8px' }}>
-              {groups.map((g) => (
-                <button key={g.id} onClick={() => loadGroupMembers(g.id)} style={{ padding: '6px 12px', borderRadius: '16px', border: '1px solid #666', background: selectedGroup === g.id ? currentTheme.accent : '#333', color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-                  {g.name}
-                </button>
-              ))}
-            </div>
-
-            {selectedGroup && (
-              <div style={{ marginTop: '12px', borderTop: '1px solid #444', paddingTop: '8px' }}>
-                <p style={{ fontSize: '12px', fontWeight: 'bold' }}>グループメンバーのなうプレ:</p>
-                {groupMembers.map((m) => (
-                  <div key={m.id} style={{ fontSize: '13px', margin: '4px 0', color: m.track_name ? currentTheme.accent : '#aaa' }}>
-                    {m.display_name}: {m.track_name ? `🎵 ${m.track_name} - ${m.artist_name}` : '停止中'}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* 友達の Now Playing 一覧 */}
-          <div style={{ textAlign: 'left', marginBottom: '20px' }}>
-            <h3>友達の Now Playing</h3>
-            {friendsStatus.length === 0 ? (
-              <p style={{ color: '#aaa', fontSize: '14px' }}>まだ友達が追加されていないか、曲を再生していません。</p>
-            ) : (
-              friendsStatus.map((friend) => (
-                <div key={friend.id} style={{ borderBottom: '1px solid #333', padding: '12px 0' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                    <img
-                      src={friend.album_cover || friend.avatar_url || 'https://via.placeholder.com/50'}
-                      alt="cover"
-                      style={{ width: '50px', height: '50px', borderRadius: '6px', objectFit: 'cover' }}
-                    />
-                    <div style={{ flex: 1 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <strong style={{ fontSize: '14px' }}>{friend.display_name}</strong>
-                        {friend.is_premium && <span style={{ fontSize: '10px', background: 'gold', color: '#000', padding: '1px 4px', borderRadius: '4px' }}>VIP</span>}
-                      </div>
-                      {friend.status_message && <p style={{ margin: '2px 0', fontSize: '11px', color: '#ffd700' }}>💬 {friend.status_message}</p>}
-                      {friend.is_ghost || !friend.track_name ? (
-                        <p style={{ margin: '4px 0 0 0', color: '#aaa', fontSize: '13px' }}>👻 共有オフ または 停止中</p>
-                      ) : (
-                        <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: currentTheme.accent }}>🎵 {friend.track_name} - {friend.artist_name}</p>
-                      )}
-                      {friend.pinned_track && <p style={{ margin: '2px 0 0 0', fontSize: '11px', color: '#aaa' }}>📌 推し曲: {friend.pinned_track}</p>}
-                    </div>
-                  </div>
-
-                  {/* リアクションボタン */}
-                  <div style={{ marginTop: '8px', display: 'flex', gap: '8px', paddingLeft: '62px' }}>
-                    {['❤️', '🔥', '🎵', '👏'].map((emoji) => (
-                      <button key={emoji} onClick={() => sendReaction(friend.id, emoji)} style={{ background: '#333', border: 'none', borderRadius: '12px', padding: '2px 8px', cursor: 'pointer', fontSize: '12px' }}>
-                        {emoji}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-
-          <button
-            onClick={handleLogout}
-            style={{ padding: '8px 16px', fontSize: '12px', borderRadius: '12px', background: '#444', color: '#fff', border: 'none', cursor: 'pointer' }}
-          >
+    <div style={{ background: activeTheme.bg, color: activeTheme.color, minHeight: '100vh', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+      {/* ヘッダー */}
+      <header style={{ padding: '16px 24px', borderBottom: `1px solid ${activeTheme.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', maxWidth: '1200px', margin: '0 auto' }}>
+        <h1 style={{ margin: 0, fontSize: '20px', fontWeight: 'bold' }}>🎵 Music Share</h1>
+        {token && (
+          <button onClick={handleLogout} style={{ background: '#333', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px' }}>
             ログアウト
           </button>
+        )}
+      </header>
+
+      {/* メインコンテンツ */}
+      <main style={{ maxWidth: '1200px', margin: '0 auto', padding: '20px' }}>
+        {!token ? (
+          <div style={{ textAlign: 'center', padding: '60px 20px' }}>
+            <h2 style={{ fontSize: '28px', marginBottom: '12px' }}>音楽でつながるリアルタイム共有</h2>
+            <p style={{ color: '#aaa', marginBottom: '24px' }}>今Spotifyで聴いている曲を友達と自動でリアルタイムシェアしよう！</p>
+            <button onClick={handleLogin} style={{ background: activeTheme.accent, color: '#fff', border: 'none', padding: '14px 28px', borderRadius: '30px', fontWeight: 'bold', fontSize: '16px', cursor: 'pointer' }}>
+              Spotifyでログインして始める
+            </button>
+          </div>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '20px' }}>
+            {/* 左カラム：自分の状況・プロフィール */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              {/* 再生状況 */}
+              <div style={{ background: activeTheme.card, border: `1px solid ${activeTheme.border}`, borderRadius: '12px', padding: '20px' }}>
+                <h3 style={{ margin: '0 0 16px 0', fontSize: '16px' }}>自分の再生状況</h3>
+                <label style={{ fontSize: '13px', display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer', marginBottom: '16px' }}>
+                  <input type="checkbox" checked={isGhostMode} onChange={(e) => setIsGhostMode(e.target.checked)} />
+                  👻 ゴーストモード（再生曲を非公開）
+                </label>
+
+                {isGhostMode ? (
+                  <p style={{ color: '#888', fontSize: '14px', margin: 0 }}>共有をオフにしています</p>
+                ) : track ? (
+                  <div style={{ textAlign: 'center' }}>
+                    <img src={track.album?.images?.[0]?.url} alt="cover" style={{ width: '160px', height: '160px', borderRadius: '8px', objectFit: 'cover', marginBottom: '12px' }} />
+                    <h4 style={{ margin: '0 0 4px 0', fontSize: '16px' }}>{track.name}</h4>
+                    <p style={{ margin: '0 0 12px 0', color: '#aaa', fontSize: '14px' }}>{track.artists?.map((a: any) => a.name).join(', ')}</p>
+                    <a href={track.external_urls?.spotify} target="_blank" rel="noreferrer" style={{ color: activeTheme.accent, fontSize: '12px', textDecoration: 'none' }}>Spotifyで開く 🎧</a>
+                  </div>
+                ) : (
+                  <p style={{ color: '#888', fontSize: '14px', margin: 0 }}>曲を再生していません</p>
+                )}
+              </div>
+
+              {/* プロフィール編集 */}
+              <div style={{ background: activeTheme.card, border: `1px solid ${activeTheme.border}`, borderRadius: '12px', padding: '20px' }}>
+                <h3 style={{ margin: '0 0 12px 0', fontSize: '16px' }}>プロフィール設定</h3>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <div>
+                    <label style={{ fontSize: '12px', color: '#aaa', display: 'block', marginBottom: '4px' }}>一言ステータス</label>
+                    <input type="text" value={statusMsg} onChange={(e) => setStatusMsg(e.target.value)} placeholder="例: 作業中..." style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #333', background: '#111', color: '#fff', boxSizing: 'border-box' }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '12px', color: '#aaa', display: 'block', marginBottom: '4px' }}>自己紹介</label>
+                    <input type="text" value={bio} onChange={(e) => setBio(e.target.value)} placeholder="好きなジャンルなど" style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #333', background: '#111', color: '#fff', boxSizing: 'border-box' }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '12px', color: '#aaa', display: 'block', marginBottom: '4px' }}>📌 推し曲ピン留め（VIP限定）</label>
+                    <input type="text" disabled={!isPremium} value={pinnedTrack} onChange={(e) => setPinnedTrack(e.target.value)} placeholder={isPremium ? '曲名 - アーティスト' : 'VIP会員のみ利用可能'} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #333', background: '#111', color: '#fff', opacity: isPremium ? 1 : 0.5, boxSizing: 'border-box' }} />
+                  </div>
+                </div>
+              </div>
+
+              {/* リアクションログ表示 */}
+              <div style={{ background: activeTheme.card, border: `1px solid ${activeTheme.border}`, borderRadius: '12px', padding: '20px' }}>
+                <h3 style={{ margin: '0 0 12px 0', fontSize: '16px' }}>届いたリアクション</h3>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>
+                  {reactions.length === 0 ? <p style={{ fontSize: '13px', color: '#888' }}>まだリアクションはありません</p> : reactions.map((r) => (
+                    <span key={r.emoji} style={{ background: '#222', border: '1px solid #444', padding: '4px 8px', borderRadius: '12px', fontSize: '13px' }}>
+                      {r.emoji} {r.count}
+                    </span>
+                  ))}
+                </div>
+                <div style={{ maxHeight: '120px', overflowY: 'auto', borderTop: '1px solid #333', paddingTop: '8px' }}>
+                  {reactionLogs.slice(0, 5).map((log, i) => (
+                    <div key={i} style={{ fontSize: '11px', color: '#aaa', marginBottom: '4px' }}>
+                      {new Date(log.created_at).toLocaleTimeString()} に {log.emoji} が届きました
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* 右カラム：フレンド・グループ・設定 */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              {/* 招待リンク */}
+              <div style={{ background: activeTheme.card, border: `1px dashed ${activeTheme.border}`, borderRadius: '12px', padding: '16px' }}>
+                <p style={{ margin: '0 0 8px 0', fontSize: '14px', fontWeight: 'bold' }}>友達を招待するリンク</p>
+                <input type="text" readOnly value={shareUrl} onClick={(e) => (e.target as HTMLInputElement).select()} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #333', background: '#111', color: '#fff', textAlign: 'center', fontSize: '12px', boxSizing: 'border-box' }} />
+              </div>
+
+              {/* プレミアムプラン機能 */}
+              <div style={{ background: activeTheme.card, border: `1px solid ${activeTheme.border}`, borderRadius: '12px', padding: '16px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <h3 style={{ margin: 0, fontSize: '15px' }}>VIP Premium 設定</h3>
+                  <button onClick={() => setIsPremium(!isPremium)} style={{ background: isPremium ? 'gold' : '#333', color: isPremium ? '#000' : '#fff', border: 'none', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>
+                    {isPremium ? 'VIP有効中' : 'VIP体験切り替え'}
+                  </button>
+                </div>
+                {isPremium ? (
+                  <div style={{ marginTop: '12px', display: 'flex', gap: '8px' }}>
+                    <button onClick={() => setTheme('dark')} style={{ padding: '4px 8px', fontSize: '12px' }}>Dark</button>
+                    <button onClick={() => setTheme('neon')} style={{ padding: '4px 8px', fontSize: '12px' }}>Neon</button>
+                    <button onClick={() => setTheme('cyber')} style={{ padding: '4px 8px', fontSize: '12px' }}>Cyber</button>
+                  </div>
+                ) : (
+                  <p style={{ margin: '8px 0 0 0', fontSize: '12px', color: '#888' }}>VIPになると推し曲ピン留め・テーマカラー変更が利用可能になります。</p>
+                )}
+              </div>
+
+              {/* グループ機能 */}
+              <div style={{ background: activeTheme.card, border: `1px solid ${activeTheme.border}`, borderRadius: '12px', padding: '20px' }}>
+                <h3 style={{ margin: '0 0 12px 0', fontSize: '16px' }}>👥 グループ機能</h3>
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+                  <input type="text" value={newGroupName} onChange={(e) => setNewGroupName(e.target.value)} placeholder="新しいグループ名" style={{ flex: 1, padding: '8px', borderRadius: '6px', border: '1px solid #333', background: '#111', color: '#fff', fontSize: '13px' }} />
+                  <button onClick={handleCreateGroup} style={{ background: activeTheme.accent, color: '#fff', border: 'none', borderRadius: '6px', padding: '8px 12px', cursor: 'pointer', fontSize: '13px' }}>作成</button>
+                </div>
+                <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '8px' }}>
+                  {groups.map((g) => (
+                    <button key={g.id} onClick={() => loadGroupMembers(g.id)} style={{ padding: '6px 12px', borderRadius: '16px', border: '1px solid #444', background: selectedGroup === g.id ? activeTheme.accent : '#222', color: '#fff', cursor: 'pointer', fontSize: '12px', whiteSpace: 'nowrap' }}>
+                      {g.name}
+                    </button>
+                  ))}
+                </div>
+                {selectedGroup && (
+                  <div style={{ marginTop: '12px', borderTop: '1px solid #333', paddingTop: '8px' }}>
+                    <p style={{ fontSize: '12px', fontWeight: 'bold', margin: '0 0 6px 0' }}>メンバーの状況:</p>
+                    {groupMembers.map((m) => (
+                      <div key={m.id} style={{ fontSize: '12px', marginBottom: '4px', color: m.track_name ? activeTheme.accent : '#888' }}>
+                        {m.display_name}: {m.track_name ? `🎵 ${m.track_name}` : '停止中'}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* 友達の Now Playing 一覧 */}
+              <div style={{ background: activeTheme.card, border: `1px solid ${activeTheme.border}`, borderRadius: '12px', padding: '20px' }}>
+                <h3 style={{ margin: '0 0 16px 0', fontSize: '16px' }}>友達の Now Playing</h3>
+                {friendsStatus.length === 0 ? (
+                  <p style={{ color: '#888', fontSize: '13px' }}>招待リンクから友達を追加してください。</p>
+                ) : (
+                  friendsStatus.map((friend) => (
+                    <div key={friend.id} style={{ borderBottom: '1px solid #222', paddingBottom: '12px', marginBottom: '12px' }}>
+                      <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                        <img src={friend.album_cover || friend.avatar_url || 'https://via.placeholder.com/48'} alt="cover" style={{ width: '48px', height: '48px', borderRadius: '6px', objectFit: 'cover' }} />
+                        <div style={{ flex: 1 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <strong style={{ fontSize: '14px' }}>{friend.display_name}</strong>
+                            {friend.is_premium && <span style={{ fontSize: '10px', background: 'gold', color: '#000', padding: '1px 4px', borderRadius: '4px', fontWeight: 'bold' }}>VIP</span>}
+                          </div>
+                          {friend.status_message && <p style={{ margin: '2px 0', fontSize: '11px', color: '#ffd700' }}>💬 {friend.status_message}</p>}
+                          {friend.is_ghost || !friend.track_name ? (
+                            <p style={{ margin: '2px 0 0 0', color: '#888', fontSize: '12px' }}>👻 非公開 または 停止中</p>
+                          ) : (
+                            <p style={{ margin: '2px 0 0 0', fontSize: '13px', color: activeTheme.accent }}>🎵 {friend.track_name} - {friend.artist_name}</p>
+                          )}
+                          {friend.pinned_track && <p style={{ margin: '2px 0 0 0', fontSize: '11px', color: '#aaa' }}>📌 推し曲: {friend.pinned_track}</p>}
+                        </div>
+                      </div>
+                      <div style={{ marginTop: '8px', display: 'flex', gap: '6px', paddingLeft: '60px' }}>
+                        {['❤️', '🔥', '🎵', '👏'].map((emoji) => (
+                          <button key={emoji} onClick={() => sendReaction(friend.id, emoji)} style={{ background: '#222', border: '1px solid #333', borderRadius: '12px', padding: '2px 8px', cursor: 'pointer', fontSize: '12px' }}>
+                            {emoji}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+      </main>
+
+      {/* フッター（利用規約・プライバシーポリシー・API説明） */}
+      <footer style={{ marginTop: '40px', padding: '20px', borderTop: `1px solid ${activeTheme.border}`, textAlign: 'center', fontSize: '12px', color: '#888' }}>
+        <div style={{ display: 'flex', justifyContent: 'center', gap: '16px', marginBottom: '8px' }}>
+          <button onClick={() => setActiveModal('terms')} style={{ background: 'none', border: 'none', color: '#888', cursor: 'pointer', fontSize: '12px' }}>利用規約</button>
+          <button onClick={() => setActiveModal('privacy')} style={{ background: 'none', border: 'none', color: '#888', cursor: 'pointer', fontSize: '12px' }}>プライバシーポリシー</button>
+          <button onClick={() => setActiveModal('api')} style={{ background: 'none', border: 'none', color: '#888', cursor: 'pointer', fontSize: '12px' }}>Spotify APIについて</button>
+        </div>
+        <p style={{ margin: 0 }}>© 2026 Music Share App</p>
+      </footer>
+
+      {/* モーダル表示 */}
+      {activeModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, padding: '20px' }}>
+          <div style={{ background: '#1e1e1e', color: '#fff', padding: '24px', borderRadius: '12px', maxWidth: '500px', width: '100%', maxHeight: '80vh', overflowY: 'auto' }}>
+            {activeModal === 'terms' && (
+              <div>
+                <h3>利用規約</h3>
+                <p style={{ fontSize: '13px', lineHeight: '1.6', color: '#ccc' }}>
+                  本サービスは、ユーザー間の音楽再生状況共有を目的としています。公序良俗に反する利用や、他者への嫌がらせ目的でのリアクション送信を禁止します。違反が確認された場合、アクセスを制限することがあります。
+                </p>
+              </div>
+            )}
+            {activeModal === 'privacy' && (
+              <div>
+                <h3>プライバシーポリシー</h3>
+                <p style={{ fontSize: '13px', lineHeight: '1.6', color: '#ccc' }}>
+                  当アプリは、Spotify Web APIを利用して「現在再生中の曲情報」および「公開プロフィール情報」のみを取得します。取得したデータはフレンド間での共有目的にのみ使用し、第三者への提供や不要な保存は行いません。
+                </p>
+              </div>
+            )}
+            {activeModal === 'api' && (
+              <div>
+                <h3>Spotify APIの連携仕様</h3>
+                <p style={{ fontSize: '13px', lineHeight: '1.6', color: '#ccc' }}>
+                  本アプリはSpotify Developer APIと連携しています。認証にはOAuth 2.0 PKCEフローを採用し、パスワード等の機密情報は保存しません。ゴーストモードを有効にすることで、いつでも再生情報の共有を停止できます。
+                </p>
+              </div>
+            )}
+            <button onClick={() => setActiveModal(null)} style={{ marginTop: '16px', background: activeTheme.accent, color: '#fff', border: 'none', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', width: '100%' }}>
+              閉じる
+            </button>
+          </div>
         </div>
       )}
     </div>
