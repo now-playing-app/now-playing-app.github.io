@@ -354,10 +354,8 @@ export default function App() {
 
   const handleSubscribe = async (selectedPlan: 'standard' | 'pro' | 'family') => {
     if (!user) return
-    let trialApplied = false
 
     if (!hasUsedTrial) {
-      trialApplied = true
       setHasUsedTrial(true)
       showToast('🎉 初回限定！1ヶ月無料体験を適用しました。')
     } else {
