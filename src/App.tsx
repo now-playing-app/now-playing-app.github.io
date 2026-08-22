@@ -1,15 +1,23 @@
 import { useState, useEffect } from 'react'
+import { createClient } from '@supabase/supabase-js'
 
+// 設定値
 const CLIENT_ID = '09ff71b7dfe043128dd49071e8096124'
 const REDIRECT_URI = window.location.origin + window.location.pathname
-const SCOPES = ['user-read-currently-playing', 'user-read-playback-state']
+const SCOPES = ['user-read-currently-playing', 'user-read-playback-state', 'user-read-private']
+
+const SUPABASE_URL = 'https://upwzobcmgblvidpxtdsh.supabase.co'
+const SUPABASE_KEY = 'sb_publishable__Iz48wErET83IgfemgX-jg_u3hZyGLM'
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
 
 export default function App() {
   const [token, setToken] = useState<string | null>(null)
+  const [user, setUser] = useState<any>(null)
   const [track, setTrack] = useState<any>(null)
   const [isGhostMode, setIsGhostMode] = useState(false)
+  const [friendsStatus, setFriendsStatus] = useState<any[]>([])
 
-  // 1. URLのハッシュからアクセストークンを取得
+  // 1. URLのハッシュ処理 & 招待パラメータ（?ref=）の獲得
   useEffect(() => {
     const hash = window.location.hash
     if (hash) {
@@ -22,44 +30,98 @@ export default function App() {
     }
   }, [])
 
-  // 2. Spotifyログイン用のURL生成
-  const handleLogin = () => {
-    const authUrl = `https://accounts.spotify.com/authorize?client_id=${CLIENT_ID}&response_type=token&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${encodeURIComponent(SCOPES.join(' '))}`
-    window.location.href = authUrl
+  // 2. Spotify ユーザー情報取得
+  useEffect(() => {
+    if (!token) return
+    fetch('https://api.spotify.com/v1/me', {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        setUser(data)
+        // 招待リンク（?ref=xxx）経由でアクセスした場合は自動で友達登録
+        const urlParams = new URLSearchParams(window.location.search)
+        const refUser = urlParams.get('ref')
+        if (refUser && refUser !== data.id) {
+          addFriend(data.id, refUser)
+        }
+      })
+  }, [token])
+
+  // 3. 友達追加処理
+  const addFriend = async (myId: string, friendId: string) => {
+    await supabase.from('friendships').upsert([{ user_id: myId, friend_id: friendId }])
+    await supabase.from('friendships').upsert([{ user_id: friendId, friend_id: myId }])
+    fetchFriendsStatus(myId)
   }
 
-  // 3. 現在再生中の曲を取得
+  // 4. 現在再生中の曲をSpotifyから取得 & Supabaseへ保存
   const fetchCurrentlyPlaying = async () => {
-    if (!token || isGhostMode) return
+    if (!token || !user) return
 
     try {
       const res = await fetch('https://api.spotify.com/v1/me/player/currently-playing', {
         headers: { Authorization: `Bearer ${token}` }
       })
 
+      let currentTrack = null
       if (res.status === 200) {
         const data = await res.json()
-        setTrack(data.item)
-      } else {
-        setTrack(null)
+        currentTrack = data.item
       }
+      setTrack(currentTrack)
+
+      // Supabaseにステータスを送信
+      await supabase.from('user_status').upsert({
+        id: user.id,
+        display_name: user.display_name || user.id,
+        avatar_url: user.images?.[0]?.url || '',
+        track_name: isGhostMode ? null : currentTrack?.name || null,
+        artist_name: isGhostMode ? null : currentTrack?.artists.map((a: any) => a.name).join(', ') || null,
+        album_cover: isGhostMode ? null : currentTrack?.album.images[0]?.url || null,
+        is_ghost: isGhostMode,
+        updated_at: new Date().toISOString()
+      })
     } catch (err) {
       console.error(err)
     }
   }
 
-  // 5秒ごとに曲情報を更新
+  // 5. 友達の再生状況を取得する
+  const fetchFriendsStatus = async (myId: string) => {
+    const { data: friendData } = await supabase.from('friendships').select('friend_id').eq('user_id', myId)
+    if (!friendData || friendData.length === 0) return
+
+    const friendIds = friendData.map((f) => f.friend_id)
+    const { data: statusData } = await supabase.from('user_status').select('*').in('id', friendIds)
+    if (statusData) setFriendsStatus(statusData)
+  }
+
+  // 5秒ごとの定期的更新 & リアルタイム受信の設定
   useEffect(() => {
-    if (token) {
+    if (token && user) {
       fetchCurrentlyPlaying()
-      const interval = setInterval(fetchCurrentlyPlaying, 5000)
+      fetchFriendsStatus(user.id)
+
+      const interval = setInterval(() => {
+        fetchCurrentlyPlaying()
+        fetchFriendsStatus(user.id)
+      }, 5000)
+
       return () => clearInterval(interval)
     }
-  }, [token, isGhostMode])
+  }, [token, user, isGhostMode])
+
+  const handleLogin = () => {
+    const authUrl = `https://accounts.spotify.com/authorize?client_id=${CLIENT_ID}&response_type=token&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${encodeURIComponent(SCOPES.join(' '))}`
+    window.location.href = authUrl
+  }
+
+  const shareUrl = user ? `${window.location.origin}${window.location.pathname}?ref=${user.id}` : ''
 
   return (
-    <div style={{ padding: '20px', fontFamily: 'sans-serif', textAlign: 'center' }}>
-      <h1>Now Playing</h1>
+    <div style={{ padding: '20px', fontFamily: 'sans-serif', maxWidth: '500px', margin: '0 auto', textAlign: 'center' }}>
+      <h1>Music Share</h1>
 
       {!token ? (
         <button onClick={handleLogin} style={{ padding: '12px 24px', fontSize: '16px', borderRadius: '20px', background: '#1DB954', color: '#fff', border: 'none', cursor: 'pointer' }}>
@@ -67,8 +129,10 @@ export default function App() {
         </button>
       ) : (
         <div>
-          <div style={{ marginBottom: '20px' }}>
-            <label style={{ fontSize: '18px', cursor: 'pointer' }}>
+          {/* 自分のステータス */}
+          <div style={{ border: '1px solid #ddd', borderRadius: '12px', padding: '16px', marginBottom: '20px', background: '#f9f9f9' }}>
+            <h3>自分の再生状況</h3>
+            <label style={{ fontSize: '16px', cursor: 'pointer', display: 'block', marginBottom: '12px' }}>
               <input
                 type="checkbox"
                 checked={isGhostMode}
@@ -77,19 +141,47 @@ export default function App() {
               />
               👻 ゴーストモード（共有オフ）
             </label>
+
+            {isGhostMode ? (
+              <p style={{ color: '#888' }}>共有を一時停止中</p>
+            ) : track ? (
+              <div>
+                <img src={track.album.images[0]?.url} alt="cover" style={{ width: '120px', borderRadius: '8px' }} />
+                <h4>{track.name}</h4>
+                <p style={{ color: '#666', fontSize: '14px' }}>{track.artists.map((a: any) => a.name).join(', ')}</p>
+              </div>
+            ) : (
+              <p style={{ color: '#888' }}>曲を再生していません</p>
+            )}
           </div>
 
-          {isGhostMode ? (
-            <p style={{ color: '#888' }}>共有を一時停止中（非表示）</p>
-          ) : track ? (
-            <div style={{ border: '1px solid #ccc', padding: '16px', borderRadius: '12px', display: 'inline-block' }}>
-              <img src={track.album.images[0]?.url} alt="album cover" style={{ width: '200px', borderRadius: '8px' }} />
-              <h2>{track.name}</h2>
-              <p>{track.artists.map((a: any) => a.name).join(', ')}</p>
-            </div>
-          ) : (
-            <p>現在曲を再生していません</p>
-          )}
+          {/* 招待リンク */}
+          <div style={{ border: '1px dashed #aaa', borderRadius: '12px', padding: '12px', marginBottom: '20px' }}>
+            <p style={{ margin: '0 0 8px 0', fontSize: '14px', fontWeight: 'bold' }}>友達を招待する URL</p>
+            <input type="text" readOnly value={shareUrl} style={{ width: '90%', padding: '8px', borderRadius: '6px', border: '1px solid #ccc' }} />
+          </div>
+
+          {/* 友達のタイムライン */}
+          <div style={{ textAlign: 'left' }}>
+            <h3>友達の Now Playing</h3>
+            {friendsStatus.length === 0 ? (
+              <p style={{ color: '#888', fontSize: '14px' }}>まだ友達が追加されていないか、友達が曲を再生していません。</p>
+            ) : (
+              friendsStatus.map((friend) => (
+                <div key={friend.id} style={{ display: 'flex', alignItems: 'center', gap: '12px', borderBottom: '1px solid #eee', padding: '12px 0' }}>
+                  <img src={friend.album_cover || friend.avatar_url || 'https://via.placeholder.com/50'} alt="cover" style={{ width: '50px', height: '50px', borderRadius: '6px', objectFit: 'cover' }} />
+                  <div>
+                    <strong style={{ fontSize: '14px' }}>{friend.display_name}</strong>
+                    {friend.is_ghost || !friend.track_name ? (
+                      <p style={{ margin: '4px 0 0 0', color: '#888', fontSize: '13px' }}>👻 共有オフ または 停止中</p>
+                    ) : (
+                      <p style={{ margin: '4px 0 0 0', fontSize: '13px' }}>🎵 {friend.track_name} - {friend.artist_name}</p>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
         </div>
       )}
     </div>
