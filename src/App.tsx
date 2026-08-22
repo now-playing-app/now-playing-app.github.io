@@ -35,7 +35,7 @@ export default function App() {
   const [isGhostMode, setIsGhostMode] = useState(false)
   const [friendsStatus, setFriendsStatus] = useState<any[]>([])
 
-  // 1. 初回アクセス時に招待コード(?ref=)があれば保存
+  // 1. 初回アクセス時に招待コード(?ref=)があればローカルに保存
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search)
     const ref = urlParams.get('ref')
@@ -44,7 +44,7 @@ export default function App() {
     }
   }, [])
 
-  // 2. Spotifyからの戻り処理 (Authorization Code)
+  // 2. Spotifyからの戻り処理 (Authorization Code から Access Token を取得)
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search)
     const code = urlParams.get('code')
@@ -71,12 +71,12 @@ export default function App() {
               window.history.replaceState({}, document.title, window.location.pathname)
             }
           })
-          .catch((err) => console.error(err))
+          .catch((err) => console.error('Token fetch error:', err))
       }
     }
   }, [])
 
-  // 3. ユーザー情報の取得 & 招待コードがあれば自動フレンド追加
+  // 3. ユーザー情報の取得 & 招待コードがあれば自動で相互フレンド追加
   useEffect(() => {
     if (!token) return
     fetch('https://api.spotify.com/v1/me', {
@@ -84,7 +84,6 @@ export default function App() {
     })
       .then((res) => {
         if (res.status === 401) {
-          // トークン切れの場合はログアウト状態に戻す
           handleLogout()
           return null
         }
@@ -93,7 +92,8 @@ export default function App() {
       .then((data) => {
         if (data && data.id) {
           setUser(data)
-          
+
+          // 招待コード(ref)が残っていれば相互フレンドに登録
           const pendingRef = localStorage.getItem('pending_ref')
           if (pendingRef && pendingRef !== data.id) {
             addFriend(data.id, pendingRef)
@@ -103,21 +103,22 @@ export default function App() {
           }
         }
       })
-      .catch((err) => console.error(err))
+      .catch((err) => console.error('Spotify user fetch error:', err))
   }, [token])
 
-  // フレンド双方向登録
+  // フレンド双方向登録 (insert で安全に追加)
   const addFriend = async (myId: string, friendId: string) => {
     try {
-      await supabase.from('friendships').upsert([{ user_id: myId, friend_id: friendId }], { onConflict: 'user_id,friend_id' })
-      await supabase.from('friendships').upsert([{ user_id: friendId, friend_id: myId }], { onConflict: 'user_id,friend_id' })
+      await supabase.from('friendships').insert([{ user_id: myId, friend_id: friendId }])
+      await supabase.from('friendships').insert([{ user_id: friendId, friend_id: myId }])
       fetchFriendsStatus(myId)
     } catch (e) {
-      console.error('フレンド追加エラー:', e)
+      console.log('フレンド登録済、またはエラー:', e)
+      fetchFriendsStatus(myId)
     }
   }
 
-  // 自分の再生状況を取得・Supabaseへ更新
+  // 自分の再生状況を取得し Supabase を更新
   const fetchCurrentlyPlaying = async () => {
     if (!token || !user) return
 
@@ -133,18 +134,21 @@ export default function App() {
       }
       setTrack(currentTrack)
 
-      await supabase.from('user_status').upsert({
-        id: user.id,
-        display_name: user.display_name || user.id,
-        avatar_url: user.images?.[0]?.url || '',
-        track_name: isGhostMode ? null : currentTrack?.name || null,
-        artist_name: isGhostMode ? null : currentTrack?.artists?.map((a: any) => a.name).join(', ') || null,
-        album_cover: isGhostMode ? null : currentTrack?.album?.images?.[0]?.url || null,
-        is_ghost: isGhostMode,
-        updated_at: new Date().toISOString(),
-      }, { onConflict: 'id' })
+      await supabase.from('user_status').upsert(
+        {
+          id: user.id,
+          display_name: user.display_name || user.id,
+          avatar_url: user.images?.[0]?.url || '',
+          track_name: isGhostMode ? null : currentTrack?.name || null,
+          artist_name: isGhostMode ? null : currentTrack?.artists?.map((a: any) => a.name).join(', ') || null,
+          album_cover: isGhostMode ? null : currentTrack?.album?.images?.[0]?.url || null,
+          is_ghost: isGhostMode,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'id' }
+      )
     } catch (err) {
-      console.error(err)
+      console.error('Track fetch error:', err)
     }
   }
 
@@ -161,11 +165,11 @@ export default function App() {
       const { data: statusData } = await supabase.from('user_status').select('*').in('id', friendIds)
       if (statusData) setFriendsStatus(statusData)
     } catch (e) {
-      console.error(e)
+      console.error('Friends status fetch error:', e)
     }
   }
 
-  // 3秒ごとに定期更新
+  // 3秒ごとの定期自動更新
   useEffect(() => {
     if (token && user) {
       fetchCurrentlyPlaying()
@@ -199,6 +203,7 @@ export default function App() {
 
   const handleLogout = () => {
     localStorage.removeItem('spotify_token')
+    localStorage.removeItem('pending_ref')
     setToken(null)
     setUser(null)
   }
@@ -210,7 +215,10 @@ export default function App() {
       <h1>Music Share</h1>
 
       {!token ? (
-        <button onClick={handleLogin} style={{ padding: '12px 24px', fontSize: '16px', borderRadius: '20px', background: '#1DB954', color: '#fff', border: 'none', cursor: 'pointer' }}>
+        <button
+          onClick={handleLogin}
+          style={{ padding: '12px 24px', fontSize: '16px', borderRadius: '20px', background: '#1DB954', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}
+        >
           Spotifyでログイン
         </button>
       ) : (
@@ -231,9 +239,9 @@ export default function App() {
               <p style={{ color: '#aaa' }}>共有を一時停止中</p>
             ) : track ? (
               <div>
-                <img src={track.album?.images?.[0]?.url} alt="cover" style={{ width: '120px', borderRadius: '8px' }} />
-                <h4>{track.name}</h4>
-                <p style={{ color: '#aaa', fontSize: '14px' }}>{track.artists?.map((a: any) => a.name).join(', ')}</p>
+                <img src={track.album?.images?.[0]?.url} alt="cover" style={{ width: '120px', borderRadius: '8px', marginBottom: '8px' }} />
+                <h4 style={{ margin: '8px 0 4px 0' }}>{track.name}</h4>
+                <p style={{ color: '#aaa', fontSize: '14px', margin: 0 }}>{track.artists?.map((a: any) => a.name).join(', ')}</p>
               </div>
             ) : (
               <p style={{ color: '#aaa' }}>曲を再生していません</p>
@@ -242,7 +250,13 @@ export default function App() {
 
           <div style={{ border: '1px dashed #666', borderRadius: '12px', padding: '12px', marginBottom: '20px' }}>
             <p style={{ margin: '0 0 8px 0', fontSize: '14px', fontWeight: 'bold' }}>友達を招待する URL</p>
-            <input type="text" readOnly value={shareUrl} style={{ width: '90%', padding: '8px', borderRadius: '6px', border: '1px solid #444', background: '#111', color: '#fff' }} />
+            <input
+              type="text"
+              readOnly
+              value={shareUrl}
+              onClick={(e) => (e.target as HTMLInputElement).select()}
+              style={{ width: '90%', padding: '8px', borderRadius: '6px', border: '1px solid #444', background: '#111', color: '#fff', textAlign: 'center' }}
+            />
           </div>
 
           <div style={{ textAlign: 'left', marginBottom: '20px' }}>
@@ -252,7 +266,11 @@ export default function App() {
             ) : (
               friendsStatus.map((friend) => (
                 <div key={friend.id} style={{ display: 'flex', alignItems: 'center', gap: '12px', borderBottom: '1px solid #333', padding: '12px 0' }}>
-                  <img src={friend.album_cover || friend.avatar_url || 'https://via.placeholder.com/50'} alt="cover" style={{ width: '50px', height: '50px', borderRadius: '6px', objectFit: 'cover' }} />
+                  <img
+                    src={friend.album_cover || friend.avatar_url || 'https://via.placeholder.com/50'}
+                    alt="cover"
+                    style={{ width: '50px', height: '50px', borderRadius: '6px', objectFit: 'cover' }}
+                  />
                   <div>
                     <strong style={{ fontSize: '14px' }}>{friend.display_name}</strong>
                     {friend.is_ghost || !friend.track_name ? (
@@ -266,7 +284,10 @@ export default function App() {
             )}
           </div>
 
-          <button onClick={handleLogout} style={{ padding: '8px 16px', fontSize: '12px', borderRadius: '12px', background: '#444', color: '#fff', border: 'none', cursor: 'pointer' }}>
+          <button
+            onClick={handleLogout}
+            style={{ padding: '8px 16px', fontSize: '12px', borderRadius: '12px', background: '#444', color: '#fff', border: 'none', cursor: 'pointer' }}
+          >
             ログアウト
           </button>
         </div>
