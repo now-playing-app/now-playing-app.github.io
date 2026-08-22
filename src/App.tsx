@@ -10,7 +10,7 @@ const SUPABASE_URL = 'https://upwzobcmgblvidpxtdsh.supabase.co'
 const SUPABASE_KEY = 'sb_publishable__Iz48wErET83IgfemgX-jg_u3hZyGLM'
 
 // 管理者権限を持つ特定のSpotifyアカウントID
-const ADMIN_SPOTIFY_ID = 'Igfemg'
+const ADMIN_SPOTIFY_ID = '31suahezgbtexyezvj5wsfxukaba'
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
 
