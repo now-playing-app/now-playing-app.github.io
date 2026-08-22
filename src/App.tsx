@@ -4,7 +4,12 @@ import { createClient } from '@supabase/supabase-js'
 // --- 環境定数 ---
 const CLIENT_ID = '09ff71b7dfe043128dd49071e8096124'
 const REDIRECT_URI = 'https://now-playing-app.github.io/'
-const SCOPES = ['user-read-currently-playing', 'user-read-playback-state', 'user-read-private', 'playlist-modify-public']
+const SCOPES = [
+  'user-read-currently-playing',
+  'user-read-playback-state',
+  'user-read-private',
+  'playlist-modify-public'
+]
 
 const SUPABASE_URL = 'https://upwzobcmgblvidpxtdsh.supabase.co'
 const SUPABASE_KEY = 'sb_publishable__Iz48wErET83IgfemgX-jg_u3hZyGLM'
@@ -36,7 +41,9 @@ async function generateCodeChallenge(codeVerifier: string) {
   const data = new TextEncoder().encode(codeVerifier)
   const digest = await window.crypto.subtle.digest('SHA-256', data)
   return btoa(String.fromCharCode.apply(null, [...new Uint8Array(digest)]))
-    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '')
 }
 
 export default function App() {
@@ -46,13 +53,13 @@ export default function App() {
   const [isGhostMode, setIsGhostMode] = useState(false)
   const [friendsStatus, setFriendsStatus] = useState<any[]>([])
 
-  // UI・ナビゲーション
+  // UI・ナビゲーションステート
   const [currentTab, setCurrentTab] = useState<'home' | 'mypage' | 'groups' | 'search' | 'chat' | 'stats' | 'settings' | 'admin'>('home')
   const [fontSize, setFontSize] = useState<'small' | 'medium' | 'large'>('medium')
   const [highContrast, setHighContrast] = useState(false)
   const [theme, setTheme] = useState<'dark' | 'neon' | 'cyber' | 'retro'>('dark')
 
-  // プロフィール & サブスク
+  // プロフィール & サブスクステート
   const [bio, setBio] = useState('')
   const [statusMsg, setStatusMsg] = useState('')
   const [pinnedTrack, setPinnedTrack] = useState('')
@@ -62,13 +69,13 @@ export default function App() {
   const [couponInput, setCouponInput] = useState('')
   const [appliedDiscount, setAppliedDiscount] = useState<number>(0)
 
-  // リアクション & 履歴 & お気に入り
+  // リアクション & 履歴 & お気に入りステート
   const [history, setHistory] = useState<any[]>([])
   const [favorites, setFavorites] = useState<any[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<any[]>([])
 
-  // グループ & チャット
+  // グループ & チャットステート
   const [groups, setGroups] = useState<any[]>([])
   const [newGroupName, setNewGroupName] = useState('')
   const [selectedGroup, setSelectedGroup] = useState<string | null>(null)
@@ -76,13 +83,13 @@ export default function App() {
   const [chatMessages, setChatMessages] = useState<any[]>([])
   const [msgInput, setMsgInput] = useState('')
 
-  // 管理者専用 state（クーポン機能）
+  // 管理者専用ステート（クーポン機能）
   const [adminCoupons, setAdminCoupons] = useState<Coupon[]>([])
   const [newCouponCode, setNewCouponCode] = useState('')
   const [newCouponDiscount, setNewCouponDiscount] = useState<number>(10)
   const [newCouponMaxUses, setNewCouponMaxUses] = useState<number>(100)
 
-  // モーダル・ポップアップ通知
+  // モーダル・ポップアップ通知・タイマーステート
   const [activeModal, setActiveModal] = useState<'terms' | 'privacy' | 'tokushoho' | 'vip' | 'api' | null>(null)
   const [toastMessage, setToastMessage] = useState<string | null>(null)
   const [sleepTimer, setSleepTimer] = useState<number | null>(null)
@@ -95,19 +102,19 @@ export default function App() {
   // PWA & キーボードショートカット
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.code === 'KeyM') showToast('🎵 ショートカット: ミュート切り替え')
+      if (e.code === 'KeyM') showToast('🎵 ショートカット: ミュート切替動作')
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [])
 
-  // スリープタイマー処理
+  // スリープタイマーカウントダウン処理
   useEffect(() => {
     if (sleepTimer === null || sleepTimer <= 0) return
     const timer = setTimeout(() => {
       setSleepTimer((prev) => {
         if (prev === null || prev <= 1) {
-          showToast('⏰ スリープタイマー：時間が経過しました')
+          showToast('⏰ スリープタイマー：設定された時間が経過しました')
           return null
         }
         return prev - 1
@@ -116,7 +123,7 @@ export default function App() {
     return () => clearTimeout(timer)
   }, [sleepTimer])
 
-  // 招待コードの取得
+  // URLパラメーターから招待コードを取得
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search)
     const ref = urlParams.get('ref')
@@ -125,7 +132,7 @@ export default function App() {
     if (groupRef) localStorage.setItem('pending_group_ref', groupRef)
   }, [])
 
-  // Spotify Auth Code処理
+  // Spotify Auth Code処理 (PKCE認証)
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search)
     const code = urlParams.get('code')
@@ -164,6 +171,7 @@ export default function App() {
 
   const isProMember = planType !== 'free' || isTrialActive()
 
+  // ユーザープロフィールの取得およびSupabaseデータ同期
   useEffect(() => {
     if (!token) return
 
@@ -178,6 +186,7 @@ export default function App() {
         if (data?.id) {
           setUser(data)
 
+          // DBからステータス取得
           const { data: dbUser } = await supabase.from('user_status').select('*').eq('id', data.id).single()
           if (dbUser) {
             setBio(dbUser.bio || '')
@@ -188,9 +197,13 @@ export default function App() {
             if (dbUser.font_size) setFontSize(dbUser.font_size)
           }
 
+          // 友達招待の自動処理
           const pendingRef = localStorage.getItem('pending_ref')
           if (pendingRef && pendingRef !== data.id) {
-            await supabase.from('friendships').upsert([{ user_id: data.id, friend_id: pendingRef }, { user_id: pendingRef, friend_id: data.id }])
+            await supabase.from('friendships').upsert([
+              { user_id: data.id, friend_id: pendingRef },
+              { user_id: pendingRef, friend_id: data.id }
+            ])
             localStorage.removeItem('pending_ref')
             if (!dbUser?.trial_started_at) {
               const nowIso = new Date().toISOString()
@@ -200,6 +213,7 @@ export default function App() {
             }
           }
 
+          // グループ招待の自動処理
           const pendingGroupRef = localStorage.getItem('pending_group_ref')
           if (pendingGroupRef) {
             await supabase.from('group_members').upsert({ group_id: pendingGroupRef, user_id: data.id })
@@ -210,7 +224,7 @@ export default function App() {
           fetchFriendsStatus(data.id)
           fetchGroups(data.id)
 
-          // 管理者プロフィールの場合はクーポン一覧を取得
+          // 管理者専用クーポン情報取得
           if (data.id === ADMIN_SPOTIFY_ID) {
             fetchAdminCoupons()
           }
@@ -223,6 +237,7 @@ export default function App() {
     fetchProfile()
   }, [token])
 
+  // 再生中の曲を定期取得・更新
   const fetchCurrentlyPlaying = async () => {
     if (!token || !user) return
     try {
@@ -241,6 +256,7 @@ export default function App() {
       }
       setTrack(currentTrack)
 
+      // Supabaseへ状態更新を同期
       await supabase.from('user_status').upsert({
         id: user.id,
         display_name: user.display_name || user.id,
@@ -329,10 +345,10 @@ export default function App() {
   }
 
   const handleSendReaction = (friendId: string, emoji: string) => {
-    showToast(`${emoji} リアクションを送信しました！ (ID: ${friendId})`)
+    showToast(`${emoji} リアクションを送信しました！`)
   }
 
-  // --- クーポン関連処理 ---
+  // --- 管理者クーポン処理 ---
   const fetchAdminCoupons = async () => {
     const { data } = await supabase.from('coupons').select('*').order('created_at', { ascending: false })
     if (data) setAdminCoupons(data)
@@ -395,6 +411,7 @@ export default function App() {
     window.speechSynthesis.speak(uttr)
   }
 
+  // ポーリング（自動更新）
   useEffect(() => {
     if (token && user) {
       fetchCurrentlyPlaying()
@@ -459,7 +476,7 @@ export default function App() {
 
       {/* ヘッダー */}
       <header style={{ padding: '12px 20px', borderBottom: `1px solid ${activeTheme.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-        <h1 style={{ margin: 0, fontSize: '1.2em' }}>🎵 Music Share Pro (Music Share App Platform)</h1>
+        <h1 style={{ margin: 0, fontSize: '1.2em' }}>🎵 Music Share Pro Platform</h1>
 
         {token && (
           <nav style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
@@ -487,8 +504,8 @@ export default function App() {
       <main style={{ maxWidth: '1100px', margin: '0 auto', padding: '20px' }}>
         {!token ? (
           <div style={{ textAlign: 'center', padding: '80px 20px' }}>
-            <h2>音楽でリアルタイムにつながるWeb App</h2>
-            <p style={{ color: '#aaa' }}>今聴いている曲を自動共有。友達やグループと一緒に試聴しよう。</p>
+            <h2>音楽でリアルタイムにつながる Web App</h2>
+            <p style={{ color: '#aaa' }}>今聴いている曲を自動共有。友達やグループと一緒に音楽体験を楽しもう。</p>
             <button onClick={handleLogin} style={{ background: activeTheme.accent, color: '#fff', border: 'none', padding: '14px 28px', borderRadius: '30px', fontWeight: 'bold', fontSize: '1.1em', cursor: 'pointer', marginTop: '16px' }}>
               Spotify連携ログイン
             </button>
@@ -544,7 +561,7 @@ export default function App() {
             {/* 検索タブ */}
             {currentTab === 'search' && (
               <div style={{ background: activeTheme.card, border: `1px solid ${activeTheme.border}`, borderRadius: '12px', padding: '20px' }}>
-                <h2>🔍 曲の検索 & プレビュー</h2>
+                <h2>🔍 曲の検索 & プレビュー試聴</h2>
                 <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
                   <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="曲名・アーティスト名" style={{ flex: 1, padding: '8px', background: '#111', color: '#fff', border: '1px solid #333', borderRadius: '6px' }} />
                   <button onClick={handleSearch} style={{ background: activeTheme.accent, color: '#fff', border: 'none', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer' }}>検索</button>
@@ -555,7 +572,7 @@ export default function App() {
                       <strong>{item.name}</strong>
                       <p style={{ margin: 0, fontSize: '0.85em', color: '#aaa' }}>{item.artists.map((a: any) => a.name).join(', ')}</p>
                     </div>
-                    {item.preview_url ? <audio controls src={item.preview_url} style={{ height: '30px' }}></audio> : <span style={{ fontSize: '0.8em', color: '#666' }}>試聴不可</span>}
+                    {item.preview_url ? <audio controls src={item.preview_url} style={{ height: '30px' }}></audio> : <span style={{ fontSize: '0.8em', color: '#666' }}>試聴音源なし</span>}
                   </div>
                 ))}
               </div>
@@ -704,8 +721,8 @@ export default function App() {
               <div style={{ background: activeTheme.card, border: '2px solid #e74c3c', borderRadius: '12px', padding: '20px' }}>
                 {user?.id === ADMIN_SPOTIFY_ID ? (
                   <div>
-                    <h2 style={{ color: '#e74c3c' }}>👑 管理者ダッシュボード (Music Share App 管理権限)</h2>
-                    <p style={{ fontSize: '0.9em', color: '#aaa' }}>Spotify ID: <strong>{ADMIN_SPOTIFY_ID}</strong> として認証済みです。</p>
+                    <h2 style={{ color: '#e74c3c' }}>👑 管理者ダッシュボード</h2>
+                    <p style={{ fontSize: '0.9em', color: '#aaa' }}>Spotify ID: <strong>{ADMIN_SPOTIFY_ID}</strong> として認証されています。</p>
 
                     <div style={{ border: '1px solid #333', padding: '16px', borderRadius: '8px', marginBottom: '24px', background: '#0d0d0d' }}>
                       <h3>🎟️ 新規クーポンコードの発行</h3>
@@ -725,7 +742,7 @@ export default function App() {
                           </div>
                         </div>
                         <button onClick={handleCreateAdminCoupon} style={{ background: '#2ea44f', color: '#fff', border: 'none', padding: '10px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', marginTop: '8px' }}>
-                          クーポンを発行してDBに登録
+                          クーポンを発行してDBに保存
                         </button>
                       </div>
                     </div>
@@ -758,7 +775,7 @@ export default function App() {
                   </div>
                 ) : (
                   <div style={{ color: '#e74c3c', textAlign: 'center', padding: '40px' }}>
-                    ❌ 拒否されました: このダッシュボードは特定の管理者（Igfemg）以外アクセスできません。
+                    ❌ アクセス拒否: この機能は特定の管理者以外利用できません。
                   </div>
                 )}
               </div>
@@ -778,14 +795,14 @@ export default function App() {
         <p>© 2026 Music Share App. All rights reserved.</p>
       </footer>
 
-      {/* モーダルポップアップ */}
+      {/* モーダル表示 */}
       {activeModal && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, padding: '20px' }}>
           <div style={{ background: '#1e1e1e', color: '#fff', padding: '24px', borderRadius: '12px', maxWidth: '500px', width: '100%', maxHeight: '80vh', overflowY: 'auto' }}>
             
             {activeModal === 'vip' && (
               <div>
-                <h3 style={{ color: 'gold', textAlign: 'center' }}>💎 料金プランの変更</h3>
+                <h3 style={{ color: 'gold', textAlign: 'center' }}>💎 料金プラン比較・変更</h3>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', margin: '16px 0' }}>
                   <div onClick={() => setSelectedPlanForPurchase('standard')} style={{ border: selectedPlanForPurchase === 'standard' ? '2px solid gold' : '1px solid #444', padding: '8px', borderRadius: '6px', textAlign: 'center', cursor: 'pointer' }}>
                     <h4>スタンダード</h4>
@@ -807,27 +824,27 @@ export default function App() {
                     <input type="text" value={couponInput} onChange={(e) => setCouponInput(e.target.value)} placeholder="コードを入力" style={{ flex: 1, padding: '6px', background: '#111', color: '#fff', border: '1px solid #333', borderRadius: '4px' }} />
                     <button onClick={handleApplyCoupon} style={{ padding: '6px 12px', background: '#333', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>適用</button>
                   </div>
-                  {appliedDiscount > 0 && <p style={{ color: 'gold', fontSize: '0.85em', margin: '4px 0' }}>割引後価格: ¥{finalPrice}/月</p>}
+                  {appliedDiscount > 0 && <p style={{ color: 'gold', fontSize: '0.85em', margin: '4px 0' }}>割引適用後: ¥{finalPrice}/月</p>}
                 </div>
 
-                <button onClick={() => { setPlanType(selectedPlanForPurchase); setActiveModal(null); showToast('プランを変更しました！') }} style={{ background: 'gold', color: '#000', border: 'none', padding: '10px', borderRadius: '6px', fontWeight: 'bold', width: '100%', cursor: 'pointer' }}>1ヶ月無料体験で開始 (¥{finalPrice}/月)</button>
+                <button onClick={() => { setPlanType(selectedPlanForPurchase); setActiveModal(null); showToast('プランをアップグレードしました！') }} style={{ background: 'gold', color: '#000', border: 'none', padding: '10px', borderRadius: '6px', fontWeight: 'bold', width: '100%', cursor: 'pointer' }}>1ヶ月無料体験で開始 (¥{finalPrice}/月)</button>
               </div>
             )}
 
             {activeModal === 'terms' && <div><h3>利用規約</h3><p style={{ fontSize: '0.85em', color: '#ccc' }}>第1条（目的）本規約は、本アプリの提供条件および利用に関する権利義務関係を定めるものです...</p></div>}
-            {activeModal === 'privacy' && <div><h3>プライバシーポリシー</h3><p style={{ fontSize: '0.85em', color: '#ccc' }}>当社はSpotify API連携を通じ、ユーザーの基本プロフィール情報および再生中トラックデータを取得します...</p></div>}
+            {activeModal === 'privacy' && <div><h3>プライバシーポリシー</h3><p style={{ fontSize: '0.85em', color: '#ccc' }}>本アプリはSpotify APIを通じユーザーの再生中データを取得・共有します...</p></div>}
             {activeModal === 'tokushoho' && (
               <div>
                 <h3>特定商取引法に基づく表記</h3>
                 <p style={{ fontSize: '0.85em', color: '#ccc' }}>
-                  販売事業者:  Music Share App 運営事務局<br />
+                  事業者名称: Music Share App 運営事務局<br />
                   運営責任者: 代表<br />
                   連絡先: support@musicshare.example.com<br />
                   販売価格: 各プランの購入ページに表示
                 </p>
               </div>
             )}
-            {activeModal === 'api' && <div><h3>Spotify API連携方針</h3><p style={{ fontSize: '0.85em', color: '#ccc' }}>本アプリはSpotify Developer Termsのガイドラインに準拠して構築されています。</p></div>}
+            {activeModal === 'api' && <div><h3>Spotify API規約</h3><p style={{ fontSize: '0.85em', color: '#ccc' }}>本アプリはSpotify Developer Policyに準拠し、適切な認可のもとAPIを利用しています。</p></div>}
 
             <button onClick={() => setActiveModal(null)} style={{ marginTop: '16px', background: activeTheme.accent, color: '#fff', border: 'none', padding: '8px', borderRadius: '6px', width: '100%', cursor: 'pointer' }}>閉じる</button>
           </div>
