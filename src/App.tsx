@@ -10,6 +10,26 @@ const SUPABASE_KEY = 'sb_publishable__Iz48wErET83IgfemgX-jg_u3hZyGLM'
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
 
+// PKCE用のランダム文字列生成
+function generateRandomString(length: number) {
+  let text = ''
+  const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+  for (let i = 0; i < length; i++) {
+    text += possible.charAt(Math.floor(Math.random() * possible.length))
+  }
+  return text
+}
+
+// Code Challenge生成
+async function generateCodeChallenge(codeVerifier: string) {
+  const data = new TextEncoder().encode(codeVerifier)
+  const digest = await window.crypto.subtle.digest('SHA-256', data)
+  return btoa(String.fromCharCode.apply(null, [...new Uint8Array(digest)]))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '')
+}
+
 export default function App() {
   const [token, setToken] = useState<string | null>(null)
   const [user, setUser] = useState<any>(null)
@@ -17,21 +37,42 @@ export default function App() {
   const [isGhostMode, setIsGhostMode] = useState(false)
   const [friendsStatus, setFriendsStatus] = useState<any[]>([])
 
+  // ログインのリターン（Authorization Code）処理
   useEffect(() => {
-    const hash = window.location.hash
-    if (hash) {
-      const tokenMatch = hash.match(/access_token=([^&]*)/)
-      if (tokenMatch) {
-        setToken(tokenMatch[1])
-        window.location.hash = ''
+    const urlParams = new URLSearchParams(window.location.search)
+    const code = urlParams.get('code')
+
+    if (code) {
+      const codeVerifier = localStorage.getItem('code_verifier')
+      if (codeVerifier) {
+        fetch('https://accounts.spotify.com/api/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            client_id: CLIENT_ID,
+            grant_type: 'authorization_code',
+            code: code,
+            redirect_uri: REDIRECT_URI,
+            code_verifier: codeVerifier,
+          }),
+        })
+          .then((res) => res.json())
+          .then((data) => {
+            if (data.access_token) {
+              setToken(data.access_token)
+              window.history.replaceState({}, document.title, window.location.pathname)
+            }
+          })
+          .catch((err) => console.error(err))
       }
     }
   }, [])
 
+  // ユーザー情報の取得
   useEffect(() => {
     if (!token) return
     fetch('https://api.spotify.com/v1/me', {
-      headers: { Authorization: `Bearer ${token}` }
+      headers: { Authorization: `Bearer ${token}` },
     })
       .then((res) => res.json())
       .then((data) => {
@@ -62,7 +103,7 @@ export default function App() {
 
     try {
       const res = await fetch('https://api.spotify.com/v1/me/player/currently-playing', {
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { Authorization: `Bearer ${token}` },
       })
 
       let currentTrack = null
@@ -80,7 +121,7 @@ export default function App() {
         artist_name: isGhostMode ? null : currentTrack?.artists?.map((a: any) => a.name).join(', ') || null,
         album_cover: isGhostMode ? null : currentTrack?.album?.images?.[0]?.url || null,
         is_ghost: isGhostMode,
-        updated_at: new Date().toISOString()
+        updated_at: new Date().toISOString(),
       })
     } catch (err) {
       console.error(err)
@@ -114,9 +155,22 @@ export default function App() {
     }
   }, [token, user, isGhostMode])
 
-  const handleLogin = () => {
-    const authUrl = `https://accounts.spotify.com/authorize?client_id=${CLIENT_ID}&response_type=token&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${encodeURIComponent(SCOPES.join(' '))}`
-    window.location.href = authUrl
+  // ログイン処理（PKCE対応）
+  const handleLogin = async () => {
+    const codeVerifier = generateRandomString(128)
+    const codeChallenge = await generateCodeChallenge(codeVerifier)
+    localStorage.setItem('code_verifier', codeVerifier)
+
+    const params = new URLSearchParams({
+      client_id: CLIENT_ID,
+      response_type: 'code',
+      redirect_uri: REDIRECT_URI,
+      scope: SCOPES.join(' '),
+      code_challenge_method: 'S256',
+      code_challenge: codeChallenge,
+    })
+
+    window.location.href = `https://accounts.spotify.com/authorize?${params.toString()}`
   }
 
   const shareUrl = user ? `${window.location.origin}${window.location.pathname}?ref=${user.id}` : ''
