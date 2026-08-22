@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react'
 import { createClient } from '@supabase/supabase-js'
 
 const CLIENT_ID = '09ff71b7dfe043128dd49071e8096124'
-// 以下の行を固定のURLに変更
 const REDIRECT_URI = 'https://now-playing-app.github.io/'
 const SCOPES = ['user-read-currently-playing', 'user-read-playback-state', 'user-read-private']
 
@@ -11,7 +10,6 @@ const SUPABASE_KEY = 'sb_publishable__Iz48wErET83IgfemgX-jg_u3hZyGLM'
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
 
-// PKCE用のランダム文字列生成
 function generateRandomString(length: number) {
   let text = ''
   const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
@@ -21,7 +19,6 @@ function generateRandomString(length: number) {
   return text
 }
 
-// Code Challenge生成
 async function generateCodeChallenge(codeVerifier: string) {
   const data = new TextEncoder().encode(codeVerifier)
   const digest = await window.crypto.subtle.digest('SHA-256', data)
@@ -38,7 +35,16 @@ export default function App() {
   const [isGhostMode, setIsGhostMode] = useState(false)
   const [friendsStatus, setFriendsStatus] = useState<any[]>([])
 
-  // ログインのリターン（Authorization Code）処理
+  // 1. 初回アクセス時にURLの ?ref= (招待コード) を保持
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search)
+    const ref = urlParams.get('ref')
+    if (ref) {
+      localStorage.setItem('pending_ref', ref)
+    }
+  }, [])
+
+  // 2. Spotifyからの戻り処理 (Authorization Code)
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search)
     const code = urlParams.get('code')
@@ -69,7 +75,7 @@ export default function App() {
     }
   }, [])
 
-  // ユーザー情報の取得
+  // 3. ユーザー情報の取得 & 招待友達の追加処理
   useEffect(() => {
     if (!token) return
     fetch('https://api.spotify.com/v1/me', {
@@ -79,10 +85,14 @@ export default function App() {
       .then((data) => {
         if (data && data.id) {
           setUser(data)
-          const urlParams = new URLSearchParams(window.location.search)
-          const refUser = urlParams.get('ref')
-          if (refUser && refUser !== data.id) {
-            addFriend(data.id, refUser)
+          
+          // 保管していた招待IDがあれば自動で双方向フレンド登録
+          const pendingRef = localStorage.getItem('pending_ref')
+          if (pendingRef && pendingRef !== data.id) {
+            addFriend(data.id, pendingRef)
+            localStorage.removeItem('pending_ref')
+          } else {
+            fetchFriendsStatus(data.id)
           }
         }
       })
@@ -156,7 +166,6 @@ export default function App() {
     }
   }, [token, user, isGhostMode])
 
-  // ログイン処理（PKCE対応）
   const handleLogin = async () => {
     const codeVerifier = generateRandomString(128)
     const codeChallenge = await generateCodeChallenge(codeVerifier)
@@ -186,7 +195,7 @@ export default function App() {
         </button>
       ) : (
         <div>
-          <div style={{ border: '1px solid #ddd', borderRadius: '12px', padding: '16px', marginBottom: '20px', background: '#f9f9f9' }}>
+          <div style={{ border: '1px solid #ddd', borderRadius: '12px', padding: '16px', marginBottom: '20px', background: '#f9f9f9', color: '#333' }}>
             <h3>自分の再生状況</h3>
             <label style={{ fontSize: '16px', cursor: 'pointer', display: 'block', marginBottom: '12px' }}>
               <input
