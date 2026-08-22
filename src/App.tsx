@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react'
 import { createClient } from '@supabase/supabase-js'
 
 const CLIENT_ID = '09ff71b7dfe043128dd49071e8096124'
-const REDIRECT_URI = window.location.origin + window.location.pathname
+// 以下の行を固定のURLに変更
+const REDIRECT_URI = 'https://now-playing-app.github.io/'
 const SCOPES = ['user-read-currently-playing', 'user-read-playback-state', 'user-read-private']
 
 const SUPABASE_URL = 'https://upwzobcmgblvidpxtdsh.supabase.co'
