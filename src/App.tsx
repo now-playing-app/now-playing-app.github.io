@@ -1,122 +1,97 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
-import './App.css'
+import { useState, useEffect } from 'react'
 
-function App() {
-  const [count, setCount] = useState(0)
+const CLIENT_ID = '09ff71b7dfe043128dd49071e8096124'
+const REDIRECT_URI = window.location.origin + window.location.pathname
+const SCOPES = ['user-read-currently-playing', 'user-read-playback-state']
+
+export default function App() {
+  const [token, setToken] = useState<string | null>(null)
+  const [track, setTrack] = useState<any>(null)
+  const [isGhostMode, setIsGhostMode] = useState(false)
+
+  // 1. URLのハッシュからアクセストークンを取得
+  useEffect(() => {
+    const hash = window.location.hash
+    if (hash) {
+      const tokenMatch = hash.match(/access_token=([^&]*)/)
+      if (tokenMatch) {
+        const _token = tokenMatch[1]
+        setToken(_token)
+        window.location.hash = ''
+      }
+    }
+  }, [])
+
+  // 2. Spotifyログイン用のURL生成
+  const handleLogin = () => {
+    const authUrl = `https://accounts.spotify.com/authorize?client_id=${CLIENT_ID}&response_type=token&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${encodeURIComponent(SCOPES.join(' '))}`
+    window.location.href = authUrl
+  }
+
+  // 3. 現在再生中の曲を取得
+  const fetchCurrentlyPlaying = async () => {
+    if (!token || isGhostMode) return
+
+    try {
+      const res = await fetch('https://api.spotify.com/v1/me/player/currently-playing', {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+
+      if (res.status === 200) {
+        const data = await res.json()
+        setTrack(data.item)
+      } else {
+        setTrack(null)
+      }
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
+  // 5秒ごとに曲情報を更新
+  useEffect(() => {
+    if (token) {
+      fetchCurrentlyPlaying()
+      const interval = setInterval(fetchCurrentlyPlaying, 5000)
+      return () => clearInterval(interval)
+    }
+  }, [token, isGhostMode])
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
+    <div style={{ padding: '20px', fontFamily: 'sans-serif', textAlign: 'center' }}>
+      <h1>Now Playing</h1>
+
+      {!token ? (
+        <button onClick={handleLogin} style={{ padding: '12px 24px', fontSize: '16px', borderRadius: '20px', background: '#1DB954', color: '#fff', border: 'none', cursor: 'pointer' }}>
+          Spotifyでログイン
         </button>
-      </section>
+      ) : (
+        <div>
+          <div style={{ marginBottom: '20px' }}>
+            <label style={{ fontSize: '18px', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={isGhostMode}
+                onChange={(e) => setIsGhostMode(e.target.checked)}
+                style={{ marginRight: '8px' }}
+              />
+              👻 ゴーストモード（共有オフ）
+            </label>
+          </div>
 
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
+          {isGhostMode ? (
+            <p style={{ color: '#888' }}>共有を一時停止中（非表示）</p>
+          ) : track ? (
+            <div style={{ border: '1px solid #ccc', padding: '16px', borderRadius: '12px', display: 'inline-block' }}>
+              <img src={track.album.images[0]?.url} alt="album cover" style={{ width: '200px', borderRadius: '8px' }} />
+              <h2>{track.name}</h2>
+              <p>{track.artists.map((a: any) => a.name).join(', ')}</p>
+            </div>
+          ) : (
+            <p>現在曲を再生していません</p>
+          )}
         </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
+      )}
+    </div>
   )
 }
-
-export default App
