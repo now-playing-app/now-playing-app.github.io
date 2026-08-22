@@ -459,7 +459,7 @@ export default function App() {
 
       {/* ヘッダー */}
       <header style={{ padding: '12px 20px', borderBottom: `1px solid ${activeTheme.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-        <h1 style={{ margin: 0, fontSize: '1.2em' }}>🎵 Music Share Pro (光瀬公平 Platform)</h1>
+        <h1 style={{ margin: 0, fontSize: '1.2em' }}>🎵 Music Share Pro (Music Share App Platform)</h1>
 
         {token && (
           <nav style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
@@ -704,7 +704,7 @@ export default function App() {
               <div style={{ background: activeTheme.card, border: '2px solid #e74c3c', borderRadius: '12px', padding: '20px' }}>
                 {user?.id === ADMIN_SPOTIFY_ID ? (
                   <div>
-                    <h2 style={{ color: '#e74c3c' }}>👑 管理者ダッシュボード (光瀬公平 管理権限)</h2>
+                    <h2 style={{ color: '#e74c3c' }}>👑 管理者ダッシュボード (Music Share App 管理権限)</h2>
                     <p style={{ fontSize: '0.9em', color: '#aaa' }}>Spotify ID: <strong>{ADMIN_SPOTIFY_ID}</strong> として認証済みです。</p>
 
                     <div style={{ border: '1px solid #333', padding: '16px', borderRadius: '8px', marginBottom: '24px', background: '#0d0d0d' }}>
@@ -775,7 +775,7 @@ export default function App() {
           <button onClick={() => setActiveModal('tokushoho')} style={{ background: 'none', border: 'none', color: '#888', cursor: 'pointer' }}>特定商取引法表記</button>
           <button onClick={() => setActiveModal('api')} style={{ background: 'none', border: 'none', color: '#888', cursor: 'pointer' }}>Spotify APIポリシー</button>
         </div>
-        <p>© 2026 Music Share App. 光瀬公平 All rights reserved.</p>
+        <p>© 2026 Music Share App. All rights reserved.</p>
       </footer>
 
       {/* モーダルポップアップ */}
