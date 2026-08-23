@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@supabase/supabase-js'
 import { LEGAL_TEXTS } from './LegalTexts'
 
@@ -83,9 +83,11 @@ export default function App() {
   const [favorites, setFavorites] = useState<any[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<any[]>([])
-  const [audioPreview, setAudioPreview] = useState<HTMLAudioElement | null>(null)
-  const [playingPreviewId, setPlayingPreviewId] = useState<string | null>(null)
   const [reactionLogs, setReactionLogs] = useState<any[]>([])
+
+  // ★ バックグラウンド音声再生用 Ref (タブを切り替えても再生が途切れない)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const [playingPreviewId, setPlayingPreviewId] = useState<string | null>(null)
 
   // グループ & チャット
   const [groups, setGroups] = useState<any[]>([])
@@ -117,6 +119,13 @@ export default function App() {
     setTimeout(() => setToastMessage(null), 3000)
   }
 
+  // 音量変更の反映
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.volume = volume / 100
+    }
+  }, [volume])
+
   // メモ保存
   useEffect(() => {
     localStorage.setItem('app_memo', memoText)
@@ -137,7 +146,11 @@ export default function App() {
     const timer = setTimeout(() => {
       setSleepTimer((prev) => {
         if (prev === null || prev <= 1) {
-          showToast('⏰ スリープタイマー：時間が経過しました')
+          if (audioRef.current) {
+            audioRef.current.pause()
+            setPlayingPreviewId(null)
+          }
+          showToast('⏰ スリープタイマー：音楽を停止しました')
           return null
         }
         return prev - 1
@@ -250,7 +263,7 @@ export default function App() {
     fetchProfile()
   }, [token])
 
-  // 再生中の曲取得 & 履歴追加（重複バグ防止機能付き）
+  // 再生中の曲取得 & 履歴追加
   const fetchCurrentlyPlaying = async () => {
     if (!token || !user) return
     try {
@@ -326,7 +339,7 @@ export default function App() {
     }
   }
 
-  // 検索 & 試聴機能
+  // 検索
   const handleSearch = async () => {
     if (!searchQuery || !token) return
     const res = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(searchQuery)}&type=track&limit=10`, {
@@ -336,24 +349,30 @@ export default function App() {
     if (data?.tracks?.items) setSearchResults(data.tracks.items)
   }
 
+  // ★ バックグラウンド持続可能なプレビュー再生機能
   const togglePreview = (url: string, id: string) => {
     if (!url) {
       showToast('⚠️ この曲の試聴音源はありません')
       return
     }
-    if (audioPreview && playingPreviewId === id) {
-      audioPreview.pause()
-      setAudioPreview(null)
+
+    if (playingPreviewId === id && audioRef.current) {
+      audioRef.current.pause()
+      audioRef.current = null
       setPlayingPreviewId(null)
     } else {
-      if (audioPreview) audioPreview.pause()
+      if (audioRef.current) {
+        audioRef.current.pause()
+      }
       const newAudio = new Audio(url)
+      newAudio.volume = volume / 100
       newAudio.play()
-      setAudioPreview(newAudio)
+      audioRef.current = newAudio
       setPlayingPreviewId(id)
+
       newAudio.onended = () => {
         setPlayingPreviewId(null)
-        setAudioPreview(null)
+        audioRef.current = null
       }
     }
   }
@@ -578,6 +597,10 @@ export default function App() {
   }
 
   const handleLogout = () => {
+    if (audioRef.current) {
+      audioRef.current.pause()
+      audioRef.current = null
+    }
     localStorage.clear()
     setToken(null)
     setUser(null)
@@ -603,10 +626,26 @@ export default function App() {
   const finalPrice = Math.floor(basePrice * (1 - appliedDiscount / 100))
 
   return (
-    <div style={{ background: activeTheme.bg, color: activeTheme.color, minHeight: '100vh', fontSize: getFontSizePx(), fontFamily: 'sans-serif' }}>
+    <div style={{ background: activeTheme.bg, color: activeTheme.color, minHeight: '100vh', fontSize: getFontSizePx(), fontFamily: 'sans-serif', paddingBottom: playingPreviewId ? '70px' : '0px' }}>
       {toastMessage && (
         <div style={{ position: 'fixed', top: '20px', right: '20px', background: activeTheme.accent, color: '#000', padding: '12px 20px', borderRadius: '8px', fontWeight: 'bold', zIndex: 2000, boxShadow: '0 4px 12px rgba(0,0,0,0.5)' }}>
           🔔 {toastMessage}
+        </div>
+      )}
+
+      {/* バックグラウンド再生プレイヤーバー（画面底部に常時固定表示） */}
+      {playingPreviewId && (
+        <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, background: '#111', borderTop: `2px solid ${activeTheme.accent}`, padding: '10px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', zIndex: 1500 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <span style={{ fontSize: '1.2em' }}>🎧</span>
+            <div>
+              <strong style={{ fontSize: '0.9em', color: activeTheme.accent }}>試聴音源をバックグラウンド再生中...</strong>
+              <p style={{ margin: 0, fontSize: '0.75em', color: '#aaa' }}>他のタブに移動しても音楽は継続して再生されます</p>
+            </div>
+          </div>
+          <button onClick={() => togglePreview('', playingPreviewId)} style={{ background: '#e74c3c', color: '#fff', border: 'none', padding: '6px 16px', borderRadius: '20px', cursor: 'pointer', fontWeight: 'bold' }}>
+            ⏸ 停止
+          </button>
         </div>
       )}
 
