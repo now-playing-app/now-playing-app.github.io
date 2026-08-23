@@ -52,11 +52,7 @@ export default function App() {
   const [isGhostMode, setIsGhostMode] = useState(false)
   const [friendsStatus, setFriendsStatus] = useState<any[]>([])
 
-  // PWA判定・インストールプロンプト
-  const [isPWA, setIsPWA] = useState(true)
-  const [deferredPrompt, setDeferredPrompt] = useState<any>(null)
-
-  // タブ切り替え（追加ページ含む）
+  // タブ切り替え
   const [currentTab, setCurrentTab] = useState<
     'home' | 'mypage' | 'groups' | 'search' | 'chat' | 'stats' | 'settings' | 'admin' | 'about' | 'business' | 'donate'
   >('home')
@@ -65,7 +61,7 @@ export default function App() {
   const [highContrast, setHighContrast] = useState(false)
   const [theme, setTheme] = useState<'dark' | 'neon' | 'cyber' | 'retro'>('dark')
 
-  // マイページ機能拡張
+  // マイページ機能
   const [bio, setBio] = useState('')
   const [statusMsg, setStatusMsg] = useState('')
   const [pinnedTrack, setPinnedTrack] = useState('')
@@ -91,7 +87,7 @@ export default function App() {
   const [playingPreviewId, setPlayingPreviewId] = useState<string | null>(null)
   const [reactionLogs, setReactionLogs] = useState<any[]>([])
 
-  // グループ & チャット (リアルタイム Supabase Channel)
+  // グループ & チャット
   const [groups, setGroups] = useState<any[]>([])
   const [newGroupName, setNewGroupName] = useState('')
   const [isPublicGroup, setIsPublicGroup] = useState(true)
@@ -119,32 +115,6 @@ export default function App() {
   const showToast = (msg: string) => {
     setToastMessage(msg)
     setTimeout(() => setToastMessage(null), 3000)
-  }
-
-  // PWAスタンドアロンチェック & インストールプロンプト捕捉
-  useEffect(() => {
-    const isStandalone = window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone
-    setIsPWA(isStandalone)
-
-    const handleBeforeInstall = (e: any) => {
-      e.preventDefault()
-      setDeferredPrompt(e)
-    }
-    window.addEventListener('beforeinstallprompt', handleBeforeInstall)
-    return () => window.removeEventListener('beforeinstallprompt', handleBeforeInstall)
-  }, [])
-
-  const handleInstallPWA = async () => {
-    if (deferredPrompt) {
-      deferredPrompt.prompt()
-      const { outcome } = await deferredPrompt.userChoice
-      if (outcome === 'accepted') {
-        showToast('アプリのインストールを開始しました！')
-      }
-      setDeferredPrompt(null)
-    } else {
-      alert('ブラウザメニューの「ホーム画面に追加」または「アプリをインストール」を選択してください。')
-    }
   }
 
   // メモ保存
@@ -280,7 +250,7 @@ export default function App() {
     fetchProfile()
   }, [token])
 
-  // 【重複修正】再生中の曲取得 & 履歴追加
+  // 再生中の曲取得 & 履歴追加（重複バグ防止機能付き）
   const fetchCurrentlyPlaying = async () => {
     if (!token || !user) return
     try {
@@ -294,7 +264,6 @@ export default function App() {
         const data = await res.json()
         currentTrack = data.item
 
-        // 一曲しか聴いていないのに連投されるバグを防止 (直前の履歴とIDが違う場合のみ履歴追加)
         if (currentTrack && currentTrack.id) {
           setHistory((prev) => {
             if (prev.length > 0 && prev[0].id === currentTrack.id) {
@@ -357,7 +326,7 @@ export default function App() {
     }
   }
 
-  // 【強化版】検索 & サウンド試聴トグル機能
+  // 検索 & 試聴機能
   const handleSearch = async () => {
     if (!searchQuery || !token) return
     const res = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(searchQuery)}&type=track&limit=10`, {
@@ -398,7 +367,7 @@ export default function App() {
     }
   }
 
-  // 【リアルタイムチャット＆現在聴いている曲の同期】
+  // チャット取得
   const fetchGroupDetails = async (groupId: string) => {
     setSelectedGroup(groupId)
     const { data: members } = await supabase.from('group_members').select('user_id').eq('group_id', groupId)
@@ -413,7 +382,7 @@ export default function App() {
     if (messages) setChatMessages(messages)
   }
 
-  // Supabase Realtime チャット購読設定
+  // Supabase Realtime チャット購読
   useEffect(() => {
     if (!selectedGroup) return
 
@@ -429,7 +398,7 @@ export default function App() {
     }
   }, [selectedGroup])
 
-  // 公開/招待グループの作成
+  // グループ作成
   const handleCreateGroup = async () => {
     if (!newGroupName.trim() || !user) return
     const { data: group } = await supabase
@@ -447,7 +416,7 @@ export default function App() {
     }
   }
 
-  // チャットメッセージ送信
+  // メッセージ送信
   const handleSendMessage = async (customText?: string) => {
     const textToSend = customText || msgInput
     if (!textToSend.trim() || !selectedGroup || !user) return
@@ -476,7 +445,7 @@ export default function App() {
     showToast(`${friend?.display_name || '友達'}へ ${emoji} リアクションを送信しました！`)
   }
 
-  // サブスク＆優待処理
+  // サブスク処理
   const handleSubscribe = async (selectedPlan: 'standard' | 'pro' | 'family') => {
     if (!user) return
     if (!hasUsedTrial) {
@@ -566,7 +535,7 @@ export default function App() {
     }
   }
 
-  // 音声読み上げ機能
+  // 音声読み上げ
   const handleSpeech = () => {
     if (!track) return
     const text = `現在再生中: ${track.name}、${track.artists?.[0]?.name}`
@@ -633,26 +602,6 @@ export default function App() {
   const basePrice = selectedPlanForPurchase === 'standard' ? 200 : selectedPlanForPurchase === 'pro' ? 400 : 800
   const finalPrice = Math.floor(basePrice * (1 - appliedDiscount / 100))
 
-  // 【PWA限定制限モーダル / 画面】
-  if (!isPWA) {
-    return (
-      <div style={{ background: '#121212', color: '#fff', minHeight: '100vh', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', padding: '20px', textAlign: 'center', fontFamily: 'sans-serif' }}>
-        <div style={{ background: '#181818', border: '1px solid #1DB954', borderRadius: '16px', padding: '40px 24px', maxWidth: '500px', width: '100%', boxShadow: '0 8px 32px rgba(0,0,0,0.8)' }}>
-          <h1 style={{ fontSize: '2em', margin: '0 0 16px 0', color: '#1DB954' }}>📱 アプリのインストールが必要です</h1>
-          <p style={{ color: '#ccc', lineHeight: '1.6', fontSize: '1em' }}>
-            本サービスは快適なリアルタイム音楽同期機能を提供するため、<strong>PWA (アプリ)</strong> 専用となっております。
-          </p>
-          <p style={{ color: '#aaa', fontSize: '0.9em', marginTop: '12px' }}>
-            下のボタンを押すか、ブラウザメニューから「ホーム画面に追加」または「アプリとしてインストール」を行ってご起動ください。
-          </p>
-          <button onClick={handleInstallPWA} style={{ background: '#1DB954', color: '#fff', border: 'none', padding: '16px 32px', borderRadius: '30px', fontWeight: 'bold', fontSize: '1.1em', cursor: 'pointer', marginTop: '24px', width: '100%' }}>
-            📲 アプリをインストールする
-          </button>
-        </div>
-      </div>
-    )
-  }
-
   return (
     <div style={{ background: activeTheme.bg, color: activeTheme.color, minHeight: '100vh', fontSize: getFontSizePx(), fontFamily: 'sans-serif' }}>
       {toastMessage && (
@@ -694,7 +643,7 @@ export default function App() {
       <main style={{ maxWidth: '1100px', margin: '0 auto', padding: '20px' }}>
         {!token ? (
           <div style={{ textAlign: 'center', padding: '80px 20px' }}>
-            <h2>音楽でリアルタイムにつながる PWA Web App</h2>
+            <h2>音楽でリアルタイムにつながる Web App</h2>
             <p style={{ color: '#aaa' }}>今聴いている曲を自動共有。友達やグループと一緒に音楽体験を楽しもう。</p>
             <button onClick={handleLogin} style={{ background: activeTheme.accent, color: '#fff', border: 'none', padding: '14px 28px', borderRadius: '30px', fontWeight: 'bold', fontSize: '1.1em', cursor: 'pointer', marginTop: '16px' }}>
               Spotify連携ログイン
@@ -702,7 +651,7 @@ export default function App() {
           </div>
         ) : (
           <>
-            {/* ホームタブ (充実化) */}
+            {/* ホームタブ */}
             {currentTab === 'home' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '20px' }}>
@@ -748,7 +697,6 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* ホーム追加セクション */}
                 <div style={{ background: activeTheme.card, border: `1px solid ${activeTheme.border}`, borderRadius: '12px', padding: '20px' }}>
                   <h3>🔥 あなたのトップアーティスト</h3>
                   <div style={{ display: 'flex', gap: '16px', overflowX: 'auto', paddingBottom: '8px' }}>
@@ -768,7 +716,7 @@ export default function App() {
               </div>
             )}
 
-            {/* 検索タブ (試聴トグル対応) */}
+            {/* 検索タブ */}
             {currentTab === 'search' && (
               <div style={{ background: activeTheme.card, border: `1px solid ${activeTheme.border}`, borderRadius: '12px', padding: '20px' }}>
                 <h2>🔍 曲の検索 & プレビュー試聴</h2>
@@ -796,7 +744,7 @@ export default function App() {
             {/* グループタブ */}
             {currentTab === 'groups' && (
               <div style={{ background: activeTheme.card, border: `1px solid ${activeTheme.border}`, borderRadius: '12px', padding: '20px' }}>
-                <h2>👥 グループ管理 (公開/招待対応)</h2>
+                <h2>👥 グループ管理</h2>
                 <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
                   <input type="text" value={newGroupName} onChange={(e) => setNewGroupName(e.target.value)} placeholder="新規グループ名" style={{ flex: 1, padding: '8px', background: '#111', color: '#fff', border: '1px solid #333', borderRadius: '6px' }} />
                   <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.85em' }}>
@@ -837,7 +785,7 @@ export default function App() {
               </div>
             )}
 
-            {/* チャットタブ (Supabase Realtime対応) */}
+            {/* チャットタブ */}
             {currentTab === 'chat' && (
               <div style={{ background: activeTheme.card, border: `1px solid ${activeTheme.border}`, borderRadius: '12px', padding: '20px' }}>
                 <h2>💬 リアルタイムグループチャット</h2>
@@ -895,7 +843,7 @@ export default function App() {
                   ))
                 )}
 
-                <h4 style={{ marginTop: '20px' }}>最近の再生履歴 (重複バグ防止適用済)</h4>
+                <h4 style={{ marginTop: '20px' }}>最近の再生履歴</h4>
                 {history.map((h, i) => (
                   <div key={i} style={{ padding: '6px 0', borderBottom: '1px solid #222', fontSize: '0.9em' }}>
                     🎵 {h.name} - {h.artists?.[0]?.name}
@@ -904,7 +852,7 @@ export default function App() {
               </div>
             )}
 
-            {/* マイページ (機能拡張) */}
+            {/* マイページ */}
             {currentTab === 'mypage' && (
               <div style={{ background: activeTheme.card, border: `1px solid ${activeTheme.border}`, borderRadius: '12px', padding: '20px' }}>
                 <h2>👤 マイページ・各種設定</h2>
@@ -925,7 +873,6 @@ export default function App() {
                   <input type="text" value={statusMsg} onChange={(e) => setStatusMsg(e.target.value)} placeholder="一言ステータス" style={{ padding: '8px', background: '#111', color: '#fff', border: '1px solid #333', borderRadius: '6px' }} />
                   <input type="text" value={pinnedTrack} onChange={(e) => setPinnedTrack(e.target.value)} placeholder="📌 推し曲固定（有料限定）" disabled={!isProMember} style={{ padding: '8px', background: '#111', color: '#fff', border: '1px solid #333', borderRadius: '6px' }} />
                   
-                  {/* 新機能拡張項目 */}
                   <input type="text" value={customBadge} onChange={(e) => setCustomBadge(e.target.value)} placeholder="🏷️ カスタム肩書き・バッジ" style={{ padding: '8px', background: '#111', color: '#fff', border: '1px solid #333', borderRadius: '6px' }} />
                   <input type="text" value={socialTwitter} onChange={(e) => setSocialTwitter(e.target.value)} placeholder="🐦 Twitter/X ユーザー名" style={{ padding: '8px', background: '#111', color: '#fff', border: '1px solid #333', borderRadius: '6px' }} />
                   <input type="text" value={socialInsta} onChange={(e) => setSocialInsta(e.target.value)} placeholder="📷 Instagram ユーザー名" style={{ padding: '8px', background: '#111', color: '#fff', border: '1px solid #333', borderRadius: '6px' }} />
@@ -982,11 +929,11 @@ export default function App() {
               </div>
             )}
 
-            {/* 新設ページ：アプリ紹介 */}
+            {/* アプリ紹介 */}
             {currentTab === 'about' && (
               <div style={{ background: activeTheme.card, border: `1px solid ${activeTheme.border}`, borderRadius: '12px', padding: '20px' }}>
                 <h2>ℹ️ Music Share Pro について</h2>
-                <p>Music Share Pro は、Spotify APIを活用して仲間と音楽体験をリアルタイム共有できるPWAプラットフォームです。</p>
+                <p>Music Share Pro は、Spotify APIを活用して仲間と音楽体験をリアルタイム共有できるWebプラットフォームです。</p>
                 <h3>🌟 主な特徴</h3>
                 <ul>
                   <li><strong>リアルタイムステータス連動：</strong> 今再生している曲をグループや友達に即時共有。</li>
@@ -996,7 +943,7 @@ export default function App() {
               </div>
             )}
 
-            {/* 新設ページ：企業向け案内 (個人事業主公開対応) */}
+            {/* 企業向け案内 */}
             {currentTab === 'business' && (
               <div style={{ background: activeTheme.card, border: `1px solid ${activeTheme.border}`, borderRadius: '12px', padding: '20px' }}>
                 <h2>🏢 企業・事業者様向けのご案内</h2>
@@ -1010,7 +957,7 @@ export default function App() {
               </div>
             )}
 
-            {/* 新設ページ：ご寄付のお願い */}
+            {/* ご寄付のお願い */}
             {currentTab === 'donate' && (
               <div style={{ background: activeTheme.card, border: `1px solid ${activeTheme.border}`, borderRadius: '12px', padding: '20px' }}>
                 <h2>💖 開発ご寄付のお願い</h2>
