@@ -1,1183 +1,168 @@
-import { useState, useEffect, useRef } from 'react'
-import { createClient } from '@supabase/supabase-js'
+// src/App.tsx
+import React, { useState, useEffect } from 'react';
+import { useSpotify } from './hooks/useSpotify';
+import { useSupabase } from './hooks/useSupabase';
+import { LandingPage } from './components/LandingPage';
+import { Chat } from './components/Chat';
+import { Admin } from './components/Admin';
+import { MyPage } from './components/MyPage';
 
-const CLIENT_ID = '09ff71b7dfe043128dd49071e8096124'
-const REDIRECT_URI = 'https://now-playing-app.github.io/'
-const SCOPES = [
-  'user-read-currently-playing',
-  'user-read-playback-state',
-  'user-read-private',
-  'playlist-modify-public',
-  'user-top-read',
-  'user-library-read'
-]
-
-const SUPABASE_URL = 'https://upwzobcmgblvidpxtdsh.supabase.co'
-const SUPABASE_KEY = 'sb_publishable__Iz48wErET83IgfemgX-jg_u3hZyGLM'
-const ADMIN_SPOTIFY_ID = '31suahezgbtexyezvj5wsfxukaba'
-
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
-
-// 長文の利用規約・プライバシーポリシーテキスト
-const LONG_TERMS_TEXT = `【利用規約 (詳細版)】
-第1条（適用）
-本規約は、本アプリケーション「Music Share Pro」（以下、「本サービス」）の提供条件および本サービスの利用に関する管理者とユーザーとの間の権利義務関係を定めることを目的とし、ユーザーと管理者との間の本サービスの利用に関わる一切の関係に適用されます。
-
-第2条（登録およびアカウント）
-1. ユーザーは、Spotify APIを通じた認証によってアカウントを作成します。
-2. ユーザーは自らの責任において認証情報を管理するものとします。
-
-第3条（禁止事項）
-ユーザーは以下の行為を行ってはなりません。
-・法令または公序良俗に違反する行為
-・他のユーザーに対するハラスメント、誹謗中傷
-・本サービスのサーバーまたはネットワークへの不正アクセス
-
-第4条（免責事項）
-本サービスは現状有姿で提供され、稼働状態やデータの完全な保存について一切の保証を行いません。`
-
-const LONG_PRIVACY_TEXT = `【プライバシーポリシー (詳細版)】
-1. 取得する情報
-本サービスは、ユーザーが同意した Spotify のアカウントデータ（表示名、プロファイル画像、再生中の楽曲情報、トップアーティスト情報）および本サービス上で作成されたグループ、メッセージ、メモ情報を取得・保持します。
-
-2. データの利用目的
-・リアルタイムでの楽曲共有機能の提供
-・フレンド機能およびグループチャット機能の実現
-・パーソナライズされた統計データの表示
-
-3. データの第三者提供
-法令に基づく場合を除き、取得した個人情報を第三者に提供することはありません。`
-
-interface Coupon {
-  id: string
-  code: string
-  discount_rate: number
-  max_uses: number
-  created_at: string
-}
-
-function generateRandomString(length: number) {
-  let text = ''
-  const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
-  for (let i = 0; i < length; i++) {
-    text += possible.charAt(Math.floor(Math.random() * possible.length))
-  }
-  return text
-}
-
-async function generateCodeChallenge(codeVerifier: string) {
-  const data = new TextEncoder().encode(codeVerifier)
-  const digest = await window.crypto.subtle.digest('SHA-256', data)
-  return btoa(String.fromCharCode.apply(null, [...new Uint8Array(digest)]))
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '')
-}
+const ADMIN_SPOTIFY_ID = '31suahezgbtexyezvj5wsfxukaba';
 
 export default function App() {
-  const [token, setToken] = useState<string | null>(localStorage.getItem('spotify_token'))
-  const [user, setUser] = useState<any>(null)
-  const [track, setTrack] = useState<any>(null)
-  const [isGhostMode, setIsGhostMode] = useState(false)
-  const [friendsStatus, setFriendsStatus] = useState<any[]>([])
+  const { token, user, track, topArtists, isLoading, handleLogin, handleLogout, fetchCurrentlyPlaying } = useSpotify();
+  const { messages, adminCoupons, hasAgreedTerms, agreeTerms, sendMessage, createCoupon, deleteCoupon } = useSupabase(user?.id);
 
-  // タブ管理 (全11機能エリア)
-  const [currentTab, setCurrentTab] = useState<
-    'home' | 'mypage' | 'groups' | 'search' | 'chat' | 'stats' | 'settings' | 'admin' | 'about' | 'business' | 'donate'
-  >('home')
+  const [currentTab, setCurrentTab] = useState<'home' | 'chat' | 'admin' | 'mypage'>('home');
+  const [couponCode, setCouponCode] = useState<string>('');
+  const [discountRate, setDiscountRate] = useState<number>(0);
 
-  // 設定・カスタマイズ
-  const [fontSize, setFontSize] = useState<'small' | 'medium' | 'large'>('medium')
-  const [highContrast, setHighContrast] = useState(false)
-  const [theme, setTheme] = useState<'dark' | 'neon' | 'cyber' | 'retro'>('dark')
-
-  // プロフィール編集
-  const [bio, setBio] = useState('')
-  const [statusMsg, setStatusMsg] = useState('')
-  const [pinnedTrack, setPinnedTrack] = useState('')
-  const [customBadge, setCustomBadge] = useState('')
-  const [socialTwitter, setSocialTwitter] = useState('')
-  const [socialInsta, setSocialInsta] = useState('')
-
-  // 料金プラン・購入・優待
-  const [planType, setPlanType] = useState<'free' | 'standard' | 'pro' | 'family'>('free')
-  const [selectedPlanForPurchase, setSelectedPlanForPurchase] = useState<'standard' | 'pro' | 'family'>('pro')
-  const [hasUsedTrial, setHasUsedTrial] = useState(false)
-  const [isShareholder, setIsShareholder] = useState(false)
-  const [shareholderCodeInput, setShareholderCodeInput] = useState('')
-  const [couponInput, setCouponInput] = useState('')
-  const [appliedDiscount, setAppliedDiscount] = useState<number>(0)
-
-  // ログ・履歴
-  const [history, setHistory] = useState<any[]>([])
-  const [favorites, setFavorites] = useState<any[]>([])
-  const [searchQuery, setSearchQuery] = useState('')
-  const [searchResults, setSearchResults] = useState<any[]>([])
-  const [reactionLogs, setReactionLogs] = useState<any[]>([])
-
-  // ★ 検索結果試聴埋め込みプレイヤーポップアップ用 State
-  const [selectedEmbedTrack, setSelectedEmbedTrack] = useState<any>(null)
-
-  // ★ バックグラウンド再生用 Ref
-  const audioRef = useRef<HTMLAudioElement | null>(null)
-  const [playingPreviewId, setPlayingPreviewId] = useState<string | null>(null)
-
-  // グループ & チャット
-  const [groups, setGroups] = useState<any[]>([])
-  const [newGroupName, setNewGroupName] = useState('')
-  const [isPublicGroup, setIsPublicGroup] = useState(true)
-  const [selectedGroup, setSelectedGroup] = useState<string | null>(null)
-  const [groupMembers, setGroupMembers] = useState<any[]>([])
-  const [chatMessages, setChatMessages] = useState<any[]>([])
-  const [msgInput, setMsgInput] = useState('')
-  const [stampPickerOpen, setStampPickerOpen] = useState(false)
-
-  // 公開プロフィール & フレンド機能
-  const [selectedProfileUser, setSelectedProfileUser] = useState<any>(null)
-  const [myFriendsList, setMyFriendsList] = useState<string[]>([])
-
-  // 管理者機能
-  const [adminCoupons, setAdminCoupons] = useState<Coupon[]>([])
-  const [newCouponCode, setNewCouponCode] = useState('')
-  const [newCouponDiscount, setNewCouponDiscount] = useState<number>(10)
-  const [newCouponMaxUses, setNewCouponMaxUses] = useState<number>(100)
-
-  // モーダル・アクセシビリティ
-  const [activeModal, setActiveModal] = useState<'terms' | 'privacy' | 'tokushoho' | 'vip' | 'api' | null>(null)
-  const [toastMessage, setToastMessage] = useState<string | null>(null)
-  const [sleepTimer, setSleepTimer] = useState<number | null>(null)
-  const [volume, setVolume] = useState(100)
-  const [memoText, setMemoText] = useState('')
-  const [topArtists, setTopArtists] = useState<any[]>([])
-  const [donateAmount, setDonateAmount] = useState(500)
-
-  const showToast = (msg: string) => {
-    setToastMessage(msg)
-    setTimeout(() => setToastMessage(null), 3000)
-  }
-
-  // 音量変更の同期
+  // URLパラメータからのクーポン自動適用
   useEffect(() => {
-    if (audioRef.current) {
-      audioRef.current.volume = volume / 100
-    }
-  }, [volume])
-
-  // ★ 1. DB(Supabase)へメモの自動同期保存 (デバウンス処理)
-  useEffect(() => {
-    if (!user) return
-    const timer = setTimeout(async () => {
-      await supabase.from('user_memos').upsert({
-        user_id: user.id,
-        memo_text: memoText,
-        updated_at: new Date().toISOString(),
-      })
-    }, 1000)
-    return () => clearTimeout(timer)
-  }, [memoText, user])
-
-  // キーボードショートカット
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.code === 'KeyM') showToast('🎵 ショートカット: 音声切り替えキー押下')
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [])
-
-  // スリープタイマー
-  useEffect(() => {
-    if (sleepTimer === null || sleepTimer <= 0) return
-    const timer = setTimeout(() => {
-      setSleepTimer((prev) => {
-        if (prev === null || prev <= 1) {
-          if (audioRef.current) {
-            audioRef.current.pause()
-            setPlayingPreviewId(null)
-          }
-          showToast('⏰ スリープタイマー：再生を自動停止しました')
-          return null
-        }
-        return prev - 1
-      })
-    }, 60000)
-    return () => clearTimeout(timer)
-  }, [sleepTimer])
-
-  // URLパラメーター招待処理
-  useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search)
-    const ref = urlParams.get('ref')
-    const groupRef = urlParams.get('group_ref')
-    if (ref) localStorage.setItem('pending_ref', ref)
-    if (groupRef) localStorage.setItem('pending_group_ref', groupRef)
-  }, [])
-
-  // Spotify Auth Code PKCE 処理
-  useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search)
-    const code = urlParams.get('code')
-    if (code) {
-      const codeVerifier = localStorage.getItem('code_verifier')
-      if (codeVerifier) {
-        fetch('https://accounts.spotify.com/api/token', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({
-            client_id: CLIENT_ID,
-            grant_type: 'authorization_code',
-            code,
-            redirect_uri: REDIRECT_URI,
-            code_verifier: codeVerifier,
-          }),
-        })
-          .then((res) => res.json())
-          .then((data) => {
-            if (data.access_token) {
-              setToken(data.access_token)
-              localStorage.setItem('spotify_token', data.access_token)
-              window.history.replaceState({}, document.title, window.location.pathname)
-              showToast('Spotify ログイン成功！')
-            }
-          })
+    const params = new URLSearchParams(window.location.search);
+    const urlCoupon = params.get('coupon');
+    if (urlCoupon) {
+      setCouponCode(urlCoupon);
+      const found = adminCoupons.find((c) => c.code === urlCoupon);
+      if (found) {
+        setDiscountRate(found.discount);
       }
     }
-  }, [])
+  }, [adminCoupons]);
 
-  const isProMember = planType !== 'free' || isShareholder
-
-  // プロフィール情報・Supabaseメモの読み込み
+  // 定期的な再生中楽曲の更新
   useEffect(() => {
-    if (!token) return
+    if (!token) return;
+    const interval = setInterval(() => {
+      fetchCurrentlyPlaying();
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [token, fetchCurrentlyPlaying]);
 
-    const fetchProfile = async () => {
-      try {
-        const res = await fetch('https://api.spotify.com/v1/me', {
-          headers: { Authorization: `Bearer ${token}` },
-        })
-        if (res.status === 401) return handleLogout()
-
-        const data = await res.json()
-        if (data?.id) {
-          setUser(data)
-
-          // ユーザー設定読み込み
-          const { data: dbUser } = await supabase.from('user_status').select('*').eq('id', data.id).single()
-          if (dbUser) {
-            setBio(dbUser.bio || '')
-            setStatusMsg(dbUser.status_message || '')
-            setPinnedTrack(dbUser.pinned_track || '')
-            setCustomBadge(dbUser.custom_badge || '')
-            setSocialTwitter(dbUser.social_twitter || '')
-            setSocialInsta(dbUser.social_insta || '')
-            setPlanType(dbUser.plan_type || 'free')
-            setHasUsedTrial(dbUser.has_used_trial || false)
-            setIsShareholder(dbUser.is_shareholder || false)
-            if (dbUser.font_size) setFontSize(dbUser.font_size)
-          }
-
-          // ★ データベースからメモ読み込み
-          const { data: memoData } = await supabase.from('user_memos').select('memo_text').eq('user_id', data.id).single()
-          if (memoData) {
-            setMemoText(memoData.memo_text || '')
-          }
-
-          // 友達リスト読み込み
-          fetchFriendsStatus(data.id)
-          fetchGroups(data.id)
-          fetchTopArtists()
-
-          if (data.id === ADMIN_SPOTIFY_ID) {
-            fetchAdminCoupons()
-          }
-        }
-      } catch (err) {
-        console.error(err)
-      }
-    }
-
-    fetchProfile()
-  }, [token])
-
-  // 再生中トラック取得
-  const fetchCurrentlyPlaying = async () => {
-    if (!token || !user) return
-    try {
-      const res = await fetch('https://api.spotify.com/v1/me/player/currently-playing', {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (res.status === 401) return handleLogout()
-
-      let currentTrack: any = null
-      if (res.status === 200) {
-        const data = await res.json()
-        currentTrack = data.item
-
-        if (currentTrack && currentTrack.id) {
-          setHistory((prev) => {
-            if (prev.length > 0 && prev[0].id === currentTrack.id) return prev
-            return [currentTrack, ...prev.slice(0, 19)]
-          })
-        }
-      }
-      setTrack(currentTrack)
-
-      await supabase.from('user_status').upsert({
-        id: user.id,
-        display_name: user.display_name || user.id,
-        avatar_url: user.images?.[0]?.url || '',
-        track_name: isGhostMode ? null : currentTrack?.name || null,
-        artist_name: isGhostMode ? null : currentTrack?.artists?.map((a: any) => a.name).join(', ') || null,
-        album_cover: isGhostMode ? null : currentTrack?.album?.images?.[0]?.url || null,
-        is_ghost: isGhostMode,
-        bio,
-        status_message: statusMsg,
-        pinned_track: isProMember ? pinnedTrack : null,
-        custom_badge: customBadge,
-        social_twitter: socialTwitter,
-        social_insta: socialInsta,
-        is_premium: isProMember,
-        plan_type: planType,
-        has_used_trial: hasUsedTrial,
-        is_shareholder: isShareholder,
-        font_size: fontSize,
-        updated_at: new Date().toISOString(),
-      })
-    } catch (err) {
-      console.error(err)
-    }
-  }
-
-  // フレンドリスト & フレンド状態取得
-  const fetchFriendsStatus = async (myId: string) => {
-    const { data: friendData } = await supabase.from('friendships').select('friend_id').eq('user_id', myId)
-    if (friendData) {
-      const fIds = friendData.map((f) => f.friend_id)
-      setMyFriendsList(fIds)
-      if (fIds.length > 0) {
-        const { data: statusData } = await supabase.from('user_status').select('*').in('id', fIds)
-        if (statusData) setFriendsStatus(statusData)
-      }
-    }
-  }
-
-  // フレンド申請・追加処理
-  const handleAddFriend = async (targetUserId: string) => {
-    if (!user || targetUserId === user.id) return
-    await supabase.from('friendships').upsert([
-      { user_id: user.id, friend_id: targetUserId },
-      { user_id: targetUserId, friend_id: user.id }
-    ])
-    showToast('🤝 フレンドを追加しました！')
-    fetchFriendsStatus(user.id)
-  }
-
-  // トップアーティスト取得
-  const fetchTopArtists = async () => {
-    if (!token) return
-    try {
-      const res = await fetch('https://api.spotify.com/v1/me/top/artists?limit=5', {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (res.ok) {
-        const data = await res.json()
-        setTopArtists(data.items || [])
-      }
-    } catch (e) {
-      console.error(e)
-    }
-  }
-
-  // 検索実行
-  const handleSearch = async () => {
-    if (!searchQuery || !token) return
-    const res = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(searchQuery)}&type=track&limit=10`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-    const data = await res.json()
-    if (data?.tracks?.items) setSearchResults(data.tracks.items)
-  }
-
-  // ★ バックグラウンド再生の切り替え
-  const togglePreview = (url: string, id: string) => {
-    if (!url) {
-      showToast('⚠️ この曲にはプレビュー用音声ファイルが含まれていません')
-      return
-    }
-
-    if (playingPreviewId === id && audioRef.current) {
-      audioRef.current.pause()
-      audioRef.current = null
-      setPlayingPreviewId(null)
+  const handleApplyCoupon = () => {
+    const found = adminCoupons.find((c) => c.code === couponCode);
+    if (found) {
+      setDiscountRate(found.discount);
+      alert(`クーポンが適用されました！ ${found.discount}% OFF`);
     } else {
-      if (audioRef.current) audioRef.current.pause()
-      const newAudio = new Audio(url)
-      newAudio.volume = volume / 100
-      newAudio.play()
-      audioRef.current = newAudio
-      setPlayingPreviewId(id)
-
-      newAudio.onended = () => {
-        setPlayingPreviewId(null)
-        audioRef.current = null
-      }
+      alert('無効なクーポンコードです。');
     }
+  };
+
+  // 未ログイン時
+  if (!token || !user) {
+    return (
+      <LandingPage 
+        hasAgreedTerms={hasAgreedTerms}
+        isLoading={isLoading}
+        onAgreeTerms={agreeTerms}
+        onLogin={handleLogin}
+      />
+    );
   }
 
-  // グループ取得
-  const fetchGroups = async (myId: string) => {
-    const { data: myGroupMembers } = await supabase.from('group_members').select('group_id').eq('user_id', myId)
-    if (myGroupMembers && myGroupMembers.length > 0) {
-      const { data: groupList } = await supabase.from('groups').select('*').in('id', myGroupMembers.map((g) => g.group_id))
-      if (groupList) setGroups(groupList)
-    }
-  }
-
-  // グループ詳細取得
-  const fetchGroupDetails = async (groupId: string) => {
-    setSelectedGroup(groupId)
-    const { data: members } = await supabase.from('group_members').select('user_id').eq('group_id', groupId)
-    if (members && members.length > 0) {
-      const { data: users } = await supabase.from('user_status').select('*').in('id', members.map((m) => m.user_id))
-      if (users) setGroupMembers(users)
-    } else {
-      setGroupMembers([])
-    }
-
-    const { data: messages } = await supabase.from('chat_messages').select('*').eq('group_id', groupId).order('created_at', { ascending: true })
-    if (messages) setChatMessages(messages)
-  }
-
-  // Realtime 購読
-  useEffect(() => {
-    if (!selectedGroup) return
-    const channel = supabase
-      .channel(`chat:${selectedGroup}`)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'chat_messages', filter: `group_id=eq.${selectedGroup}` }, (payload) => {
-        setChatMessages((prev) => [...prev, payload.new])
-      })
-      .subscribe()
-
-    return () => {
-      supabase.removeChannel(channel)
-    }
-  }, [selectedGroup])
-
-  // グループ作成
-  const handleCreateGroup = async () => {
-    if (!newGroupName.trim() || !user) return
-    const { data: group } = await supabase
-      .from('groups')
-      .insert([{ name: newGroupName, owner_id: user.id, is_public: isPublicGroup }])
-      .select()
-      .single()
-
-    if (group) {
-      await supabase.from('group_members').insert([{ group_id: group.id, user_id: user.id }])
-      setNewGroupName('')
-      fetchGroups(user.id)
-      fetchGroupDetails(group.id)
-      showToast('新規グループを作成しました！')
-    }
-  }
-
-  // チャットメッセージ送信
-  const handleSendMessage = async (customText?: string) => {
-    const textToSend = customText || msgInput
-    if (!textToSend.trim() || !selectedGroup || !user) return
-    const newMsg = {
-      group_id: selectedGroup,
-      user_id: user.id,
-      user_name: user.display_name || user.id,
-      message: textToSend,
-      created_at: new Date().toISOString(),
-    }
-    await supabase.from('chat_messages').insert([newMsg])
-    if (!customText) setMsgInput('')
-    setStampPickerOpen(false)
-  }
-
-  // リアクション送信
-  const handleSendReaction = (friendId: string, emoji: string) => {
-    const friend = friendsStatus.find((f) => f.id === friendId)
-    const log = {
-      id: Date.now(),
-      friendName: friend?.display_name || friendId,
-      emoji,
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    }
-    setReactionLogs((prev) => [log, ...prev])
-    showToast(`${friend?.display_name || '友達'}へ ${emoji} を送りました！`)
-  }
-
-  // ★ 修正済み・高機能クーポン管理処理
-  const fetchAdminCoupons = async () => {
-    const { data } = await supabase.from('coupons').select('*').order('created_at', { ascending: false })
-    if (data) setAdminCoupons(data)
-  }
-
-  const handleCreateAdminCoupon = async () => {
-    if (!newCouponCode.trim()) return
-    const couponObj = {
-      code: newCouponCode.trim().toUpperCase(),
-      discount_rate: newCouponDiscount,
-      max_uses: newCouponMaxUses,
-      created_at: new Date().toISOString(),
-    }
-    const { data, error } = await supabase.from('coupons').insert([couponObj]).select().single()
-    if (!error && data) {
-      setAdminCoupons((prev) => [data, ...prev])
-      setNewCouponCode('')
-      showToast(`🎟️ クーポン [${data.code}] を正常に作成しました！`)
-    } else {
-      showToast('❌ クーポンの保存に失敗しました。SQLテーブル構造を確認してください。')
-    }
-  }
-
-  const handleDeleteAdminCoupon = async (id: string) => {
-    const { error } = await supabase.from('coupons').delete().eq('id', id)
-    if (!error) {
-      setAdminCoupons((prev) => prev.filter((c) => c.id !== id))
-      showToast('🗑️ クーポンを削除しました')
-    }
-  }
-
-  const handleApplyCoupon = async () => {
-    const code = couponInput.trim().toUpperCase()
-    if (!code) return
-    if (code === 'PRO2026') {
-      setAppliedDiscount(20)
-      showToast('🎉 特別クーポン適用: 20% OFF!')
-      return
-    }
-    const { data } = await supabase.from('coupons').select('*').eq('code', code).single()
-    if (data && data.discount_rate) {
-      setAppliedDiscount(data.discount_rate)
-      showToast(`🎉 クーポン適用: ${data.discount_rate}% OFF!`)
-    } else {
-      showToast('❌ 有効なクーポンコードではありません')
-    }
-  }
-
-  // 購読プラン変更
-  const handleSubscribe = async (selectedPlan: 'standard' | 'pro' | 'family') => {
-    if (!user) return
-    if (!hasUsedTrial) {
-      setHasUsedTrial(true)
-      showToast('🎉 初回限定！1ヶ月無料体験を適用しました。')
-    } else {
-      showToast(`💳 ${selectedPlan.toUpperCase()}プランの決済を完了しました。`)
-    }
-    setPlanType(selectedPlan)
-    await supabase.from('user_status').upsert({
-      id: user.id,
-      plan_type: selectedPlan,
-      has_used_trial: true,
-      is_shareholder: isShareholder,
-      updated_at: new Date().toISOString()
-    })
-    setActiveModal(null)
-  }
-
-  const handleCancelSubscription = async () => {
-    if (!user) return
-    if (confirm('本当にサブスクリプションを解約しますか？')) {
-      setPlanType('free')
-      await supabase.from('user_status').update({ plan_type: 'free' }).eq('id', user.id)
-      showToast('解約手続きが完了しました。')
-    }
-  }
-
-  const handleApplyShareholderCode = async () => {
-    if (shareholderCodeInput.trim() === 'SH-2026-VIP') {
-      setIsShareholder(true)
-      setPlanType('pro')
-      if (user) {
-        await supabase.from('user_status').upsert({ id: user.id, is_shareholder: true, plan_type: 'pro' })
-      }
-      showToast('🏛️ 株主優待認証が成功しました。PRO機能が解放されます。')
-      setShareholderCodeInput('')
-    } else {
-      showToast('❌ 無効な優待コードです。')
-    }
-  }
-
-  // 読み上げ
-  const handleSpeech = () => {
-    if (!track) return
-    const text = `現在再生中: ${track.name}、${track.artists?.[0]?.name}`
-    const uttr = new SpeechSynthesisUtterance(text)
-    uttr.lang = 'ja-JP'
-    window.speechSynthesis.speak(uttr)
-  }
-
-  // 寄付
-  const handleDonate = () => {
-    showToast(`💖 ${donateAmount}円の寄付を承りました！ありがとうございます！`)
-  }
-
-  // ポーリング
-  useEffect(() => {
-    if (token && user) {
-      fetchCurrentlyPlaying()
-      const interval = setInterval(() => {
-        fetchCurrentlyPlaying()
-        fetchFriendsStatus(user.id)
-        if (selectedGroup) fetchGroupDetails(selectedGroup)
-      }, 5000)
-      return () => clearInterval(interval)
-    }
-  }, [token, user, isGhostMode, bio, statusMsg, pinnedTrack, planType, selectedGroup])
-
-  const handleLogin = async () => {
-    const codeVerifier = generateRandomString(128)
-    const codeChallenge = await generateCodeChallenge(codeVerifier)
-    localStorage.setItem('code_verifier', codeVerifier)
-    const params = new URLSearchParams({
-      client_id: CLIENT_ID,
-      response_type: 'code',
-      redirect_uri: REDIRECT_URI,
-      scope: SCOPES.join(' '),
-      code_challenge_method: 'S256',
-      code_challenge: codeChallenge,
-    })
-    window.location.href = `https://accounts.spotify.com/authorize?${params.toString()}`
-  }
-
-  const handleLogout = () => {
-    if (audioRef.current) {
-      audioRef.current.pause()
-      audioRef.current = null
-    }
-    localStorage.clear()
-    setToken(null)
-    setUser(null)
-    showToast('ログアウトしました')
-  }
-
-  const getFontSizePx = () => (fontSize === 'small' ? '13px' : fontSize === 'large' ? '18px' : '15px')
-
-  const activeTheme = highContrast
-    ? { bg: '#000000', card: '#111111', border: '#ffffff', accent: '#ffff00', color: '#ffffff' }
-    : theme === 'neon'
-    ? { bg: '#0b031a', card: '#160933', border: '#ff007f', accent: '#ff007f', color: '#00f6ff' }
-    : theme === 'cyber'
-    ? { bg: '#000000', card: '#0d0d0d', border: '#00ff66', accent: '#00ff66', color: '#ffffff' }
-    : theme === 'retro'
-    ? { bg: '#2b1e1a', card: '#3d2b25', border: '#d4a373', accent: '#faedcd', color: '#fefae0' }
-    : { bg: '#121212', card: '#181818', border: '#282828', accent: '#1DB954', color: '#ffffff' }
-
-  const shareUrl = user ? `${window.location.origin}${window.location.pathname}?ref=${user.id}` : ''
-  const groupShareUrl = selectedGroup ? `${window.location.origin}${window.location.pathname}?group_ref=${selectedGroup}` : ''
-
-  const basePrice = selectedPlanForPurchase === 'standard' ? 200 : selectedPlanForPurchase === 'pro' ? 400 : 800
-  const finalPrice = Math.floor(basePrice * (1 - appliedDiscount / 100))
-
+  // ログイン中メイン画面
   return (
-    <div style={{ background: activeTheme.bg, color: activeTheme.color, minHeight: '100vh', fontSize: getFontSizePx(), fontFamily: 'sans-serif', paddingBottom: playingPreviewId ? '70px' : '0px' }}>
-      {toastMessage && (
-        <div style={{ position: 'fixed', top: '20px', right: '20px', background: activeTheme.accent, color: '#000', padding: '12px 20px', borderRadius: '8px', fontWeight: 'bold', zIndex: 2000, boxShadow: '0 4px 12px rgba(0,0,0,0.5)' }}>
-          🔔 {toastMessage}
+    <div style={{ fontFamily: 'sans-serif', background: '#121212', color: '#fff', minHeight: '100vh' }}>
+      <nav style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '20px 40px', background: '#000', borderBottom: '1px solid #282828' }}>
+        <h2 style={{ margin: 0, color: '#1db954', cursor: 'pointer' }} onClick={() => setCurrentTab('home')}>🎵 Now Playing Hub</h2>
+        <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
+          <button onClick={() => setCurrentTab('home')} style={navBtnStyle(currentTab === 'home')}>ホーム</button>
+          <button onClick={() => setCurrentTab('chat')} style={navBtnStyle(currentTab === 'chat')}>チャット (開発中)</button>
+          {user.id === ADMIN_SPOTIFY_ID && (
+            <button onClick={() => setCurrentTab('admin')} style={navBtnStyle(currentTab === 'admin')}>管理者</button>
+          )}
+          <button onClick={() => setCurrentTab('mypage')} style={navBtnStyle(currentTab === 'mypage')}>マイページ</button>
+          <button onClick={handleLogout} style={{ background: '#e74c3c', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>ログアウト</button>
         </div>
-      )}
+      </nav>
 
-      {/* バックグラウンド再生プレイヤーバー */}
-      {playingPreviewId && (
-        <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, background: '#111', borderTop: `2px solid ${activeTheme.accent}`, padding: '10px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', zIndex: 1500 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <span style={{ fontSize: '1.2em' }}>🎧</span>
-            <div>
-              <strong style={{ fontSize: '0.9em', color: activeTheme.accent }}>音源をバックグラウンド試聴中...</strong>
-              <p style={{ margin: 0, fontSize: '0.75em', color: '#aaa' }}>タブや画面を切り替えても再生は維持されます</p>
+      <div style={{ padding: '40px', maxWidth: '900px', margin: '0 auto' }}>
+        {currentTab === 'home' && (
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+              <h1>ようこそ、{user.display_name} さん</h1>
+              {user.id === ADMIN_SPOTIFY_ID && (
+                <span style={{ background: '#f1c40f', color: '#000', padding: '4px 10px', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 'bold', height: 'fit-content' }}>VIP ADMIN</span>
+              )}
             </div>
-          </div>
-          <button onClick={() => togglePreview('', playingPreviewId)} style={{ background: '#e74c3c', color: '#fff', border: 'none', padding: '6px 16px', borderRadius: '20px', cursor: 'pointer', fontWeight: 'bold' }}>
-            ⏸ 停止
-          </button>
-        </div>
-      )}
-
-      {/* ヘッダーナビゲーション */}
-      <header style={{ padding: '12px 20px', borderBottom: `1px solid ${activeTheme.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-        <h1 style={{ margin: 0, fontSize: '1.2em' }}>🎵 Music Share Pro Platform</h1>
-
-        {token && (
-          <nav style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-            <button onClick={() => setCurrentTab('home')} style={{ background: currentTab === 'home' ? activeTheme.accent : '#222', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '16px', cursor: 'pointer' }}>ホーム</button>
-            <button onClick={() => setCurrentTab('search')} style={{ background: currentTab === 'search' ? activeTheme.accent : '#222', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '16px', cursor: 'pointer' }}>検索 & 試聴</button>
-            <button onClick={() => setCurrentTab('groups')} style={{ background: currentTab === 'groups' ? activeTheme.accent : '#222', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '16px', cursor: 'pointer' }}>グループ</button>
-            <button onClick={() => setCurrentTab('chat')} style={{ background: currentTab === 'chat' ? activeTheme.accent : '#222', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '16px', cursor: 'pointer' }}>チャット</button>
-            <button onClick={() => setCurrentTab('stats')} style={{ background: currentTab === 'stats' ? activeTheme.accent : '#222', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '16px', cursor: 'pointer' }}>統計 & ログ</button>
-            <button onClick={() => setCurrentTab('mypage')} style={{ background: currentTab === 'mypage' ? activeTheme.accent : '#222', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '16px', cursor: 'pointer' }}>マイページ</button>
-            <button onClick={() => setCurrentTab('settings')} style={{ background: currentTab === 'settings' ? activeTheme.accent : '#222', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '16px', cursor: 'pointer' }}>設定</button>
-            <button onClick={() => setCurrentTab('about')} style={{ background: currentTab === 'about' ? activeTheme.accent : '#222', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '16px', cursor: 'pointer' }}>紹介</button>
-            <button onClick={() => setCurrentTab('business')} style={{ background: currentTab === 'business' ? activeTheme.accent : '#222', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '16px', cursor: 'pointer' }}>企業向け</button>
-            <button onClick={() => setCurrentTab('donate')} style={{ background: currentTab === 'donate' ? activeTheme.accent : '#222', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '16px', cursor: 'pointer' }}>ご寄付</button>
             
-            {user?.id === ADMIN_SPOTIFY_ID && (
-              <button onClick={() => setCurrentTab('admin')} style={{ background: currentTab === 'admin' ? '#e74c3c' : '#8b0000', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '16px', fontWeight: 'bold', cursor: 'pointer' }}>👑 管理者</button>
-            )}
-          </nav>
-        )}
-
-        <div style={{ display: 'flex', gap: '8px' }}>
-          <button onClick={() => setActiveModal('vip')} style={{ background: 'gold', color: '#000', border: 'none', padding: '6px 12px', borderRadius: '16px', fontWeight: 'bold', cursor: 'pointer', fontSize: '0.85em' }}>💎 プラン比較</button>
-          {token && <button onClick={handleLogout} style={{ background: '#333', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '0.85em' }}>ログアウト</button>}
-        </div>
-      </header>
-
-      {/* メインビュー */}
-      <main style={{ maxWidth: '1100px', margin: '0 auto', padding: '20px' }}>
-        {!token ? (
-          <div style={{ textAlign: 'center', padding: '80px 20px' }}>
-            <h2>音楽でリアルタイムにつながる Web App</h2>
-            <p style={{ color: '#aaa' }}>Spotifyで聴いている楽曲を友達・グループへ自動共有。</p>
-            <button onClick={handleLogin} style={{ background: activeTheme.accent, color: '#fff', border: 'none', padding: '14px 28px', borderRadius: '30px', fontWeight: 'bold', fontSize: '1.1em', cursor: 'pointer', marginTop: '16px' }}>
-              Spotify連携ログイン
-            </button>
-          </div>
-        ) : (
-          <>
-            {/* ホーム */}
-            {currentTab === 'home' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '20px' }}>
-                  
-                  {/* 今聴いている曲 */}
-                  <div style={{ background: activeTheme.card, border: `1px solid ${activeTheme.border}`, borderRadius: '12px', padding: '20px' }}>
-                    <h3>🎧 今聴いている曲</h3>
-                    {track ? (
-                      <div style={{ textAlign: 'center' }}>
-                        <img src={track.album?.images?.[0]?.url} alt="cover" style={{ width: '160px', height: '160px', borderRadius: '8px', objectFit: 'cover' }} />
-                        <h4>{track.name}</h4>
-                        <p style={{ color: '#aaa' }}>{track.artists?.map((a: any) => a.name).join(', ')}</p>
-                        
-                        <div style={{ display: 'flex', justifyContent: 'center', gap: '8px', marginBottom: '12px' }}>
-                          <button onClick={() => { setFavorites([...favorites, track]); showToast('お気に入りに追加！') }} style={{ background: '#333', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer' }}>❤️ お気に入り</button>
-                          <button onClick={handleSpeech} style={{ background: '#333', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer' }}>🗣️ 読み上げ</button>
-                        </div>
-
-                        {/* Spotify公式埋め込みプレイヤー */}
-                        {track.id && (
-                          <iframe src={`https://open.spotify.com/embed/track/${track.id}`} width="100%" height="80" frameBorder="0" allow="encrypted-media" style={{ borderRadius: '8px' }}></iframe>
-                        )}
-                      </div>
-                    ) : <p style={{ color: '#888' }}>現在曲を再生していません</p>}
-                  </div>
-
-                  {/* 友達のステータス */}
-                  <div style={{ background: activeTheme.card, border: `1px solid ${activeTheme.border}`, borderRadius: '12px', padding: '20px' }}>
-                    <h3>👥 友達の Now Playing</h3>
-                    {friendsStatus.length === 0 ? <p style={{ color: '#888' }}>友達が登録されていません。マイページの招待URLを共有しよう！</p> : (
-                      friendsStatus.map((friend) => (
-                        <div key={friend.id} style={{ borderBottom: '1px solid #333', paddingBottom: '10px', marginBottom: '10px' }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <div>
-                              <strong style={{ cursor: 'pointer', color: activeTheme.accent }} onClick={() => setSelectedProfileUser(friend)}>
-                                {friend.display_name}
-                              </strong> 
-                              {friend.custom_badge && <span style={{ background: '#444', color: '#fff', fontSize: '0.7em', padding: '1px 4px', borderRadius: '4px', marginLeft: '4px' }}>{friend.custom_badge}</span>} 
-                              {friend.is_premium && <span style={{ background: 'gold', color: '#000', fontSize: '0.7em', padding: '1px 4px', borderRadius: '4px', marginLeft: '4px' }}>PRO</span>}
-                            </div>
-                            <div style={{ display: 'flex', gap: '4px' }}>
-                              <button onClick={() => handleSendReaction(friend.id, '🔥')} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>🔥</button>
-                              <button onClick={() => handleSendReaction(friend.id, '❤️')} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>❤️</button>
-                              <button onClick={() => handleSendReaction(friend.id, '👏')} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>👏</button>
-                            </div>
-                          </div>
-                          <p style={{ margin: '4px 0', color: activeTheme.accent, fontSize: '0.9em' }}>{friend.track_name ? `🎵 ${friend.track_name} - ${friend.artist_name}` : '停止中'}</p>
-                          {friend.status_message && <p style={{ margin: 0, fontSize: '0.8em', color: '#aaa' }}>💬 {friend.status_message}</p>}
-                        </div>
-                      ))
-                    )}
+            <div style={{ background: '#181818', padding: '25px', borderRadius: '12px', marginTop: '30px', border: '1px solid #282828' }}>
+              <h3>🎧 現在再生中の楽曲</h3>
+              {track ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '20px', marginTop: '15px' }}>
+                  {track.album?.images?.[0]?.url && (
+                    <img src={track.album.images[0].url} alt="Album Art" style={{ width: '100px', height: '100px', borderRadius: '8px', objectFit: 'cover' }} />
+                  )}
+                  <div>
+                    <p style={{ fontSize: '1.2rem', fontWeight: 'bold', margin: '0 0 5px 0' }}>{track.name}</p>
+                    <p style={{ color: '#b3b3b3', margin: 0 }}>{track.artists?.map((a: any) => a.name).join(', ')}</p>
+                    <p style={{ color: '#727272', fontSize: '0.9rem', marginTop: '5px' }}>アルバム: {track.album?.name}</p>
                   </div>
                 </div>
+              ) : (
+                <p style={{ color: '#b3b3b3', marginTop: '10px' }}>現在音楽を再生していないか、取得できません。</p>
+              )}
+            </div>
 
-                {/* トップアーティスト */}
-                <div style={{ background: activeTheme.card, border: `1px solid ${activeTheme.border}`, borderRadius: '12px', padding: '20px' }}>
-                  <h3>🔥 あなたのトップアーティスト</h3>
-                  <div style={{ display: 'flex', gap: '16px', overflowX: 'auto', paddingBottom: '8px' }}>
-                    {topArtists.map((artist) => (
-                      <div key={artist.id} style={{ textAlign: 'center', minWidth: '100px' }}>
-                        <img src={artist.images?.[0]?.url} alt={artist.name} style={{ width: '80px', height: '80px', borderRadius: '50%', objectFit: 'cover' }} />
-                        <p style={{ fontSize: '0.85em', margin: '6px 0 0 0' }}>{artist.name}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* DB自動保存対応メモ帳 */}
-                <div style={{ background: activeTheme.card, border: `1px solid ${activeTheme.border}`, borderRadius: '12px', padding: '20px' }}>
-                  <h3>📝 Quick 音楽メモ帳 (クラウドDB自動保存)</h3>
-                  <textarea value={memoText} onChange={(e) => setMemoText(e.target.value)} placeholder="気になった曲やアイデアをここに入力すると、1秒後にデータベースに自動保存されます..." style={{ width: '100%', height: '80px', background: '#111', color: '#fff', border: '1px solid #333', borderRadius: '6px', padding: '8px' }} />
-                </div>
+            <div style={{ marginTop: '30px', background: '#181818', padding: '25px', borderRadius: '12px', border: '1px solid #282828' }}>
+              <h4>💳 プレミアムクーポン適用</h4>
+              <div style={{ display: 'flex', gap: '10px', marginTop: '15px' }}>
+                <input 
+                  type="text" 
+                  placeholder="クーポンコードを入力" 
+                  value={couponCode} 
+                  onChange={(e) => setCouponCode(e.target.value)}
+                  style={{ padding: '10px 15px', borderRadius: '6px', border: '1px solid #333', background: '#282828', color: '#fff', flex: 1 }}
+                />
+                <button onClick={handleApplyCoupon} style={{ background: '#1db954', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>適用</button>
               </div>
-            )}
+              {discountRate > 0 && <p style={{ color: '#1db954', marginTop: '12px', fontWeight: 'bold' }}>🎉 適用中: {discountRate}% 割引が適用されています！</p>}
+            </div>
 
-            {/* 検索タブ */}
-            {currentTab === 'search' && (
-              <div style={{ background: activeTheme.card, border: `1px solid ${activeTheme.border}`, borderRadius: '12px', padding: '20px' }}>
-                <h2>🔍 曲の検索 & プレビュー試聴</h2>
-                <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
-                  <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSearch()} placeholder="曲名・アーティスト名を入力..." style={{ flex: 1, padding: '8px', background: '#111', color: '#fff', border: '1px solid #333', borderRadius: '6px' }} />
-                  <button onClick={handleSearch} style={{ background: activeTheme.accent, color: '#fff', border: 'none', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer' }}>検索</button>
-                </div>
-
-                {searchResults.map((item) => (
-                  <div key={item.id} style={{ display: 'flex', flexDirection: 'column', padding: '12px 0', borderBottom: '1px solid #222' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                        {item.album?.images?.[2]?.url && <img src={item.album.images[2].url} alt="thumb" style={{ width: '40px', height: '40px', borderRadius: '4px' }} />}
-                        <div>
-                          <strong>{item.name}</strong>
-                          <p style={{ margin: 0, fontSize: '0.85em', color: '#aaa' }}>{item.artists.map((a: any) => a.name).join(', ')}</p>
-                        </div>
-                      </div>
-                      <div style={{ display: 'flex', gap: '8px' }}>
-                        {/* 添付画像のような公式プレイヤーポップアップ表示ボタン */}
-                        <button onClick={() => setSelectedEmbedTrack(selectedEmbedTrack?.id === item.id ? null : item)} style={{ background: '#333', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '0.85em' }}>
-                          {selectedEmbedTrack?.id === item.id ? '閉じる' : '▶ 試聴 (埋め込み)'}
-                        </button>
-                        {/* バックグラウンド再生ボタン */}
-                        <button onClick={() => togglePreview(item.preview_url, item.id)} style={{ background: playingPreviewId === item.id ? '#e74c3c' : activeTheme.accent, color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '0.85em' }}>
-                          {playingPreviewId === item.id ? '⏸ 停止' : '🎧 バックグラウンド試聴'}
-                        </button>
-                      </div>
+            {topArtists.length > 0 && (
+              <div style={{ marginTop: '30px', background: '#181818', padding: '25px', borderRadius: '12px', border: '1px solid #282828' }}>
+                <h4>🎤 あなたのトップアーティスト</h4>
+                <div style={{ display: 'flex', gap: '15px', marginTop: '15px', overflowX: 'auto', paddingBottom: '10px' }}>
+                  {topArtists.map((artist) => (
+                    <div key={artist.id} style={{ textAlign: 'center', minWidth: '100px' }}>
+                      {artist.images?.[0]?.url && (
+                        <img src={artist.images[0].url} alt={artist.name} style={{ width: '80px', height: '80px', borderRadius: '50%', objectFit: 'cover', marginBottom: '8px' }} />
+                      )}
+                      <p style={{ fontSize: '0.85rem', margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{artist.name}</p>
                     </div>
-
-                    {/* ★ 検索画面上に画像添付のような公式埋め込みプレイヤーを表示 */}
-                    {selectedEmbedTrack?.id === item.id && (
-                      <div style={{ marginTop: '12px', background: '#000', padding: '10px', borderRadius: '8px' }}>
-                        <iframe src={`https://open.spotify.com/embed/track/${item.id}`} width="100%" height="80" frameBorder="0" allow="encrypted-media" style={{ borderRadius: '8px' }}></iframe>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* グループ */}
-            {currentTab === 'groups' && (
-              <div style={{ background: activeTheme.card, border: `1px solid ${activeTheme.border}`, borderRadius: '12px', padding: '20px' }}>
-                <h2>👥 グループ管理</h2>
-                <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
-                  <input type="text" value={newGroupName} onChange={(e) => setNewGroupName(e.target.value)} placeholder="新規グループ名" style={{ flex: 1, padding: '8px', background: '#111', color: '#fff', border: '1px solid #333', borderRadius: '6px' }} />
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.85em' }}>
-                    <input type="checkbox" checked={isPublicGroup} onChange={(e) => setIsPublicGroup(e.target.checked)} /> 公開グループ
-                  </label>
-                  <button onClick={handleCreateGroup} style={{ background: activeTheme.accent, color: '#fff', border: 'none', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer' }}>作成</button>
-                </div>
-
-                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '20px' }}>
-                  {groups.map((g) => (
-                    <button key={g.id} onClick={() => fetchGroupDetails(g.id)} style={{ padding: '8px 16px', borderRadius: '20px', border: '1px solid #444', background: selectedGroup === g.id ? activeTheme.accent : '#222', color: '#fff', cursor: 'pointer' }}>
-                      {g.is_public ? '🌐' : '🔒'} {g.name}
-                    </button>
                   ))}
                 </div>
-
-                {selectedGroup && (
-                  <div>
-                    <h4>👥 メンバー一覧 (クリックしてプロフィール閲覧/フレンド申請)</h4>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                      {groupMembers.map((m) => (
-                        <div key={m.id} style={{ background: '#222', padding: '8px 12px', borderRadius: '6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <div style={{ cursor: 'pointer' }} onClick={() => setSelectedProfileUser(m)}>
-                            <strong style={{ color: activeTheme.accent }}>{m.display_name}</strong>
-                            <span style={{ fontSize: '0.85em', color: '#aaa', marginLeft: '10px' }}>
-                              {m.track_name ? `🎵 ${m.track_name} - ${m.artist_name}` : '停止中'}
-                            </span>
-                          </div>
-                          <div>
-                            {user && m.id !== user.id && (
-                              myFriendsList.includes(m.id) ? (
-                                <span style={{ fontSize: '0.8em', color: 'gold' }}>🤝 フレンド</span>
-                              ) : (
-                                <button onClick={() => handleAddFriend(m.id)} style={{ background: activeTheme.accent, color: '#fff', border: 'none', padding: '4px 10px', borderRadius: '12px', fontSize: '0.8em', cursor: 'pointer' }}>
-                                  + フレンド申請
-                                </button>
-                              )
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
               </div>
             )}
-
-            {/* チャット */}
-            {currentTab === 'chat' && (
-              <div style={{ background: activeTheme.card, border: `1px solid ${activeTheme.border}`, borderRadius: '12px', padding: '20px' }}>
-                <h2>💬 リアルタイムグループチャット</h2>
-                {!selectedGroup ? <p style={{ color: '#888' }}>「グループ」タブから対象のグループを選択してください。</p> : (
-                  <div>
-                    <div style={{ height: '320px', overflowY: 'auto', border: '1px solid #333', padding: '12px', borderRadius: '8px', marginBottom: '12px', background: '#0a0a0a' }}>
-                      {chatMessages.length === 0 ? <p style={{ color: '#666' }}>まだメッセージはありません。</p> : (
-                        chatMessages.map((m, idx) => (
-                          <div key={idx} style={{ marginBottom: '8px' }}>
-                            <strong style={{ fontSize: '0.85em', color: activeTheme.accent }}>{m.user_name}</strong>
-                            <p style={{ margin: '2px 0', background: '#222', padding: '6px 10px', borderRadius: '6px', display: 'inline-block' }}>{m.message}</p>
-                          </div>
-                        ))
-                      )}
-                    </div>
-
-                    {stampPickerOpen && (
-                      <div style={{ display: 'flex', gap: '8px', marginBottom: '8px', background: '#222', padding: '8px', borderRadius: '8px' }}>
-                        {['🎵', '🔥', '👏', '❤️', '🎉', '🎧', '🎸', '🎹'].map((stamp) => (
-                          <button key={stamp} onClick={() => handleSendMessage(stamp)} style={{ background: 'none', border: 'none', fontSize: '1.5em', cursor: 'pointer' }}>{stamp}</button>
-                        ))}
-                      </div>
-                    )}
-
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                      <button onClick={() => setStampPickerOpen(!stampPickerOpen)} style={{ background: '#333', color: '#fff', border: 'none', padding: '8px 12px', borderRadius: '6px', cursor: 'pointer' }}>😊</button>
-                      <input type="text" value={msgInput} onChange={(e) => setMsgInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()} placeholder="メッセージを入力..." style={{ flex: 1, padding: '8px', background: '#111', color: '#fff', border: '1px solid #333', borderRadius: '6px' }} />
-                      <button onClick={() => handleSendMessage()} style={{ background: activeTheme.accent, color: '#fff', border: 'none', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer' }}>送信</button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* 統計 */}
-            {currentTab === 'stats' && (
-              <div style={{ background: activeTheme.card, border: `1px solid ${activeTheme.border}`, borderRadius: '12px', padding: '20px' }}>
-                <h2>📊 リスニング統計 & ログ</h2>
-                <p>再生ログ数: <strong>{history.length}</strong> 曲 | お気に入り数: <strong>{favorites.length}</strong> 曲</p>
-                <h4>⚡ 送信リアクションログ</h4>
-                {reactionLogs.map((log) => (
-                  <div key={log.id} style={{ padding: '4px 0', borderBottom: '1px solid #222', fontSize: '0.85em', color: '#ccc' }}>
-                    [{log.time}] <strong>{log.friendName}</strong> に {log.emoji} を送信しました
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* マイページ */}
-            {currentTab === 'mypage' && (
-              <div style={{ background: activeTheme.card, border: `1px solid ${activeTheme.border}`, borderRadius: '12px', padding: '20px' }}>
-                <h2>👤 マイページ設定</h2>
-                <p>現在のプラン: <strong style={{ color: 'gold' }}>{planType.toUpperCase()}</strong> {isShareholder && ' (株主優待会員)'}</p>
-                
-                {planType !== 'free' && (
-                  <button onClick={handleCancelSubscription} style={{ background: '#e74c3c', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', marginBottom: '16px' }}>
-                    サブスクリプションを解約する
-                  </button>
-                )}
-
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  <label><input type="checkbox" checked={isGhostMode} onChange={(e) => setIsGhostMode(e.target.checked)} /> 👻 ゴーストモード（他人に再生状況を隠す）</label>
-                  <textarea value={bio} onChange={(e) => setBio(e.target.value)} placeholder="自己紹介バイオを入力..." style={{ width: '100%', padding: '8px', background: '#111', color: '#fff', border: '1px solid #333', borderRadius: '6px' }} />
-                  <input type="text" value={statusMsg} onChange={(e) => setStatusMsg(e.target.value)} placeholder="一言ステータス" style={{ padding: '8px', background: '#111', color: '#fff', border: '1px solid #333', borderRadius: '6px' }} />
-                  <input type="text" value={pinnedTrack} onChange={(e) => setPinnedTrack(e.target.value)} placeholder="📌 推し曲固定（有料限定）" disabled={!isProMember} style={{ padding: '8px', background: '#111', color: '#fff', border: '1px solid #333', borderRadius: '6px' }} />
-                  <input type="text" value={customBadge} onChange={(e) => setCustomBadge(e.target.value)} placeholder="🏷️ カスタムバッジ" style={{ padding: '8px', background: '#111', color: '#fff', border: '1px solid #333', borderRadius: '6px' }} />
-                </div>
-
-                <hr style={{ borderColor: '#333', margin: '20px 0' }} />
-                <h4>🏛️ 株主優待コードの入力</h4>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <input type="text" value={shareholderCodeInput} onChange={(e) => setShareholderCodeInput(e.target.value)} placeholder="優待コード (例: SH-2026-VIP)" style={{ padding: '8px', background: '#111', color: '#fff', border: '1px solid #333', borderRadius: '6px', flex: 1 }} />
-                  <button onClick={handleApplyShareholderCode} style={{ background: 'gold', color: '#000', border: 'none', padding: '8px 16px', fontWeight: 'bold', borderRadius: '6px', cursor: 'pointer' }}>認証</button>
-                </div>
-              </div>
-            )}
-
-            {/* 設定 */}
-            {currentTab === 'settings' && (
-              <div style={{ background: activeTheme.card, border: `1px solid ${activeTheme.border}`, borderRadius: '12px', padding: '20px' }}>
-                <h2>⚙️ アクセシビリティ & システム設定</h2>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                  <div>
-                    <h4>音量調整</h4>
-                    <input type="range" min="0" max="100" value={volume} onChange={(e) => setVolume(Number(e.target.value))} /> {volume}%
-                  </div>
-                  <div>
-                    <h4>フォントサイズ</h4>
-                    <button onClick={() => setFontSize('small')} style={{ padding: '6px 12px', marginRight: '6px' }}>小</button>
-                    <button onClick={() => setFontSize('medium')} style={{ padding: '6px 12px', marginRight: '6px' }}>中</button>
-                    <button onClick={() => setFontSize('large')} style={{ padding: '6px 12px' }}>大</button>
-                  </div>
-                  <div>
-                    <h4>テーマ</h4>
-                    <button onClick={() => setTheme('dark')} style={{ padding: '6px 12px', marginRight: '6px' }}>ダーク</button>
-                    <button onClick={() => setTheme('neon')} style={{ padding: '6px 12px', marginRight: '6px' }}>ネオン</button>
-                    <button onClick={() => setTheme('cyber')} style={{ padding: '6px 12px', marginRight: '6px' }}>サイバー</button>
-                    <button onClick={() => setTheme('retro')} style={{ padding: '6px 12px' }}>レトロ</button>
-                  </div>
-                  <div>
-                    <h4>⏰ スリープタイマー</h4>
-                    <button onClick={() => setSleepTimer(15)} style={{ padding: '6px 12px', marginRight: '6px' }}>15分</button>
-                    <button onClick={() => setSleepTimer(30)} style={{ padding: '6px 12px', marginRight: '6px' }}>30分</button>
-                    <button onClick={() => setSleepTimer(60)} style={{ padding: '6px 12px' }}>60分</button>
-                    {sleepTimer !== null && <span style={{ color: activeTheme.accent, marginLeft: '10px' }}>残り {sleepTimer} 分</span>}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* 紹介 */}
-            {currentTab === 'about' && (
-              <div style={{ background: activeTheme.card, border: `1px solid ${activeTheme.border}`, borderRadius: '12px', padding: '20px' }}>
-                <h2>ℹ️ App 概要</h2>
-                <p>リアルタイムSpotifyステータス共有＆コミュニケーションツールです。</p>
-              </div>
-            )}
-
-            {/* 企業向け */}
-            {currentTab === 'business' && (
-              <div style={{ background: activeTheme.card, border: `1px solid ${activeTheme.border}`, borderRadius: '12px', padding: '20px' }}>
-                <h2>🏢 事業者向け案内</h2>
-                <p>店舗BGM共有、タイアップ展開のお問い合わせは support@example.com まで。</p>
-              </div>
-            )}
-
-            {/* 寄付 */}
-            {currentTab === 'donate' && (
-              <div style={{ background: activeTheme.card, border: `1px solid ${activeTheme.border}`, borderRadius: '12px', padding: '20px' }}>
-                <h2>💖 開発の支援・ご寄付</h2>
-                <p>アプリの安定運用・開発サポートのための寄付を受け付けております。</p>
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '16px' }}>
-                  <button onClick={() => setDonateAmount(500)} style={{ padding: '8px 16px', background: donateAmount === 500 ? 'gold' : '#333', color: '#000' }}>¥500</button>
-                  <button onClick={() => setDonateAmount(1000)} style={{ padding: '8px 16px', background: donateAmount === 1000 ? 'gold' : '#333', color: '#000' }}>¥1,000</button>
-                  <button onClick={handleDonate} style={{ background: activeTheme.accent, color: '#fff', border: 'none', padding: '8px 20px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>寄付を実行</button>
-                </div>
-              </div>
-            )}
-
-            {/* 管理者 */}
-            {currentTab === 'admin' && (
-              <div style={{ background: activeTheme.card, border: '2px solid #e74c3c', borderRadius: '12px', padding: '20px' }}>
-                {user?.id === ADMIN_SPOTIFY_ID ? (
-                  <div>
-                    <h2 style={{ color: '#e74c3c' }}>👑 管理者ダッシュボード</h2>
-
-                    <div style={{ border: '1px solid #333', padding: '16px', borderRadius: '8px', marginBottom: '24px', background: '#0d0d0d' }}>
-                      <h3>🎟️ クーポンコード新規発行</h3>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                        <input type="text" value={newCouponCode} onChange={(e) => setNewCouponCode(e.target.value)} placeholder="コード名 (例: SUMMER2026)" style={{ width: '100%', padding: '8px', background: '#111', color: '#fff', border: '1px solid #444', borderRadius: '4px' }} />
-                        <div style={{ display: 'flex', gap: '10px' }}>
-                          <input type="number" value={newCouponDiscount} onChange={(e) => setNewCouponDiscount(Number(e.target.value))} placeholder="割引率 (%)" style={{ flex: 1, padding: '8px', background: '#111', color: '#fff', border: '1px solid #444', borderRadius: '4px' }} />
-                          <input type="number" value={newCouponMaxUses} onChange={(e) => setNewCouponMaxUses(Number(e.target.value))} placeholder="上限回数" style={{ flex: 1, padding: '8px', background: '#111', color: '#fff', border: '1px solid #444', borderRadius: '4px' }} />
-                        </div>
-                        <button onClick={handleCreateAdminCoupon} style={{ background: '#2ea44f', color: '#fff', border: 'none', padding: '10px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' }}>
-                          データベースに保存して発行
-                        </button>
-                      </div>
-                    </div>
-
-                    <h3>📋 発行済みクーポン一覧</h3>
-                    {adminCoupons.length === 0 ? <p style={{ color: '#888' }}>発行されたクーポンはありません。</p> : (
-                      <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.9em' }}>
-                        <thead>
-                          <tr style={{ borderBottom: '1px solid #444', background: '#222' }}>
-                            <th style={{ padding: '8px' }}>コード</th>
-                            <th style={{ padding: '8px' }}>割引率</th>
-                            <th style={{ padding: '8px' }}>上限数</th>
-                            <th style={{ padding: '8px' }}>操作</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {adminCoupons.map((c) => (
-                            <tr key={c.id} style={{ borderBottom: '1px solid #333' }}>
-                              <td style={{ padding: '8px', fontWeight: 'bold', color: 'gold' }}>{c.code}</td>
-                              <td style={{ padding: '8px' }}>{c.discount_rate}% OFF</td>
-                              <td style={{ padding: '8px' }}>{c.max_uses} 回</td>
-                              <td style={{ padding: '8px' }}>
-                                <button onClick={() => handleDeleteAdminCoupon(c.id)} style={{ background: '#e74c3c', color: '#fff', border: 'none', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer' }}>削除</button>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    )}
-                  </div>
-                ) : (
-                  <div style={{ color: '#e74c3c', textAlign: 'center', padding: '40px' }}>アクセス権限がありません。</div>
-                )}
-              </div>
-            )}
-          </>
+          </div>
         )}
-      </main>
 
-      {/* フッター */}
-      <footer style={{ marginTop: '40px', padding: '20px', borderTop: `1px solid ${activeTheme.border}`, textAlign: 'center', fontSize: '0.85em', color: '#888' }}>
-        <div style={{ display: 'flex', justifyContent: 'center', gap: '16px', marginBottom: '8px', flexWrap: 'wrap' }}>
-          <button onClick={() => setActiveModal('terms')} style={{ background: 'none', border: 'none', color: '#888', cursor: 'pointer' }}>利用規約 (詳細)</button>
-          <button onClick={() => setActiveModal('privacy')} style={{ background: 'none', border: 'none', color: '#888', cursor: 'pointer' }}>プライバシーポリシー (詳細)</button>
-        </div>
-        <p>© 2026 Music Share App. All rights reserved.</p>
-      </footer>
+        {currentTab === 'chat' && (
+          <Chat messages={messages} user={user} onSendMessage={sendMessage} />
+        )}
 
-      {/* 公開プロフィールモーダル */}
-      {selectedProfileUser && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1200, padding: '20px' }}>
-          <div style={{ background: '#1e1e1e', color: '#fff', padding: '24px', borderRadius: '12px', maxWidth: '400px', width: '100%', textAlign: 'center' }}>
-            <img src={selectedProfileUser.avatar_url || 'https://via.placeholder.com/80'} alt="avatar" style={{ width: '80px', height: '80px', borderRadius: '50%', objectFit: 'cover', marginBottom: '12px' }} />
-            <h3>{selectedProfileUser.display_name}</h3>
-            {selectedProfileUser.custom_badge && <span style={{ background: '#444', color: '#fff', padding: '2px 8px', borderRadius: '10px', fontSize: '0.8em' }}>{selectedProfileUser.custom_badge}</span>}
-            <p style={{ color: '#aaa', fontSize: '0.9em', marginTop: '10px' }}>{selectedProfileUser.bio || '自己紹介はありません。'}</p>
-            {selectedProfileUser.status_message && <p style={{ color: activeTheme.accent }}>💬 {selectedProfileUser.status_message}</p>}
-            
-            <div style={{ marginTop: '16px', display: 'flex', gap: '8px', justifyContent: 'center' }}>
-              {user && selectedProfileUser.id !== user.id && !myFriendsList.includes(selectedProfileUser.id) && (
-                <button onClick={() => { handleAddFriend(selectedProfileUser.id); setSelectedProfileUser(null) }} style={{ background: activeTheme.accent, color: '#fff', border: 'none', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer' }}>
-                  🤝 フレンド追加
-                </button>
-              )}
-              <button onClick={() => setSelectedProfileUser(null)} style={{ background: '#333', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer' }}>閉じる</button>
-            </div>
-          </div>
-        </div>
-      )}
+        {currentTab === 'admin' && user.id === ADMIN_SPOTIFY_ID && (
+          <Admin adminCoupons={adminCoupons} onCreateCoupon={createCoupon} onDeleteCoupon={deleteCoupon} />
+        )}
 
-      {/* 各種設定・規約・プラン購入モーダル */}
-      {activeModal && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, padding: '20px' }}>
-          <div style={{ background: '#1e1e1e', color: '#fff', padding: '24px', borderRadius: '12px', maxWidth: '500px', width: '100%', maxHeight: '80vh', overflowY: 'auto' }}>
-            {activeModal === 'vip' && (
-              <div>
-                <h3 style={{ color: 'gold', textAlign: 'center' }}>💎 料金プラン比較・変更</h3>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', margin: '16px 0' }}>
-                  <div onClick={() => setSelectedPlanForPurchase('standard')} style={{ border: selectedPlanForPurchase === 'standard' ? '2px solid gold' : '1px solid #444', padding: '8px', borderRadius: '6px', textAlign: 'center', cursor: 'pointer' }}>
-                    <h4>スタンダード</h4>
-                    <p style={{ color: 'gold' }}>¥200/月</p>
-                  </div>
-                  <div onClick={() => setSelectedPlanForPurchase('pro')} style={{ border: selectedPlanForPurchase === 'pro' ? '2px solid gold' : '1px solid #444', padding: '8px', borderRadius: '6px', textAlign: 'center', cursor: 'pointer' }}>
-                    <h4>プロ</h4>
-                    <p style={{ color: 'gold' }}>¥400/月</p>
-                  </div>
-                  <div onClick={() => setSelectedPlanForPurchase('family')} style={{ border: selectedPlanForPurchase === 'family' ? '2px solid gold' : '1px solid #444', padding: '8px', borderRadius: '6px', textAlign: 'center', cursor: 'pointer' }}>
-                    <h4>ファミリー</h4>
-                    <p style={{ color: 'gold' }}>¥800/月</p>
-                  </div>
-                </div>
-
-                <div style={{ marginBottom: '16px' }}>
-                  <label style={{ fontSize: '0.85em', color: '#aaa' }}>クーポンコード (例: PRO2026)</label>
-                  <div style={{ display: 'flex', gap: '4px', marginTop: '4px' }}>
-                    <input type="text" value={couponInput} onChange={(e) => setCouponInput(e.target.value)} placeholder="コードを入力" style={{ flex: 1, padding: '6px', background: '#111', color: '#fff', border: '1px solid #333', borderRadius: '4px' }} />
-                    <button onClick={handleApplyCoupon} style={{ padding: '6px 12px', background: '#333', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>適用</button>
-                  </div>
-                  {appliedDiscount > 0 && <p style={{ color: 'gold', fontSize: '0.85em', margin: '4px 0' }}>割引適用後: ¥{finalPrice}/月</p>}
-                </div>
-
-                <button onClick={() => handleSubscribe(selectedPlanForPurchase)} style={{ background: 'gold', color: '#000', border: 'none', padding: '10px', borderRadius: '6px', fontWeight: 'bold', width: '100%', cursor: 'pointer' }}>
-                  {!hasUsedTrial ? `1ヶ月無料体験で開始 (以降 ¥${finalPrice}/月)` : `プランを購入 (¥${finalPrice}/月)`}
-                </button>
-              </div>
-            )}
-
-            {activeModal === 'terms' && <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'sans-serif', fontSize: '0.9em', color: '#ccc' }}>{LONG_TERMS_TEXT}</pre>}
-            {activeModal === 'privacy' && <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'sans-serif', fontSize: '0.9em', color: '#ccc' }}>{LONG_PRIVACY_TEXT}</pre>}
-
-            <button onClick={() => setActiveModal(null)} style={{ marginTop: '16px', background: activeTheme.accent, color: '#fff', border: 'none', padding: '8px', borderRadius: '6px', width: '100%', cursor: 'pointer' }}>閉じる</button>
-          </div>
-        </div>
-      )}
+        {currentTab === 'mypage' && (
+          <MyPage user={user} />
+        )}
+      </div>
     </div>
-  )
+  );
+}
+
+function navBtnStyle(active: boolean) {
+  return {
+    background: active ? '#1db954' : 'transparent',
+    color: '#fff',
+    border: 'none',
+    padding: '8px 16px',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    fontWeight: active ? 'bold' : 'normal',
+    transition: 'background 0.2s'
+  };
 }
