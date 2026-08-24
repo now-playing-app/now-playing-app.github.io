@@ -1,3 +1,4 @@
+// src/components/LandingPage.tsx
 import React from 'react';
 
 interface LandingPageProps {
@@ -49,7 +50,13 @@ export const LandingPage: React.FC<LandingPageProps> = ({ hasAgreedTerms, isLoad
         )}
 
         <div style={{ marginTop: '60px', fontSize: '0.8rem', color: '#727272', borderTop: '1px solid #282828', paddingTop: '20px' }}>
-          <p>特定商取引法に基づく表記 | プライバシーポリシー | 利用規約</p>
+          <p>
+            <span style={{ cursor: 'pointer', textDecoration: 'underline' }} onClick={() => alert('特定商取引法に基づく表記: テスト運営中のため省略されています。')}>特定商取引法に基づく表記</span>
+            {' | '}
+            <span style={{ cursor: 'pointer', textDecoration: 'underline' }} onClick={() => alert('プライバシーポリシー: 取得したデータは本アプリの機能提供にのみ使用します。')}>プライバシーポリシー</span>
+            {' | '}
+            <span style={{ cursor: 'pointer', textDecoration: 'underline' }} onClick={() => alert('利用規約: 公序良俗に反する利用を禁止します。')}>利用規約</span>
+          </p>
         </div>
       </div>
     </div>

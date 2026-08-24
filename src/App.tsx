@@ -150,6 +150,17 @@ export default function App() {
           <MyPage user={user} />
         )}
       </div>
+
+      <footer style={{ textAlign: 'center', padding: '30px 0', color: '#727272', fontSize: '0.85rem', borderTop: '1px solid #282828', marginTop: '60px' }}>
+        <p>
+          <span style={{ cursor: 'pointer', textDecoration: 'underline' }} onClick={() => alert('特定商取引法に基づく表記: テスト運営中のため省略されています。')}>特定商取引法に基づく表記</span>
+          {' | '}
+          <span style={{ cursor: 'pointer', textDecoration: 'underline' }} onClick={() => alert('プライバシーポリシー: 取得したデータは本アプリの機能提供にのみ使用します。')}>プライバシーポリシー</span>
+          {' | '}
+          <span style={{ cursor: 'pointer', textDecoration: 'underline' }} onClick={() => alert('利用規約: 公序良俗に反する利用を禁止します。')}>利用規約</span>
+        </p>
+        <p style={{ marginTop: '10px' }}>© 2026 Now Playing Hub</p>
+      </footer>
     </div>
   );
 }
